@@ -6,8 +6,6 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=1G
-#SBATCH --mail-type=BEGIN
-#SBATCH --mail-user=tony.cs13@nycu.edu.tw
 
 echo "=== SLURM TEST JOB ==="
 echo "Job ID:        $SLURM_JOB_ID"
