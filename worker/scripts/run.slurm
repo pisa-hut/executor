@@ -17,7 +17,6 @@ echo
 
 echo "Hostname:      $(hostname)"
 echo "CPU Info:"
-lscpu | head -n 20 || true
 echo
 
 echo "Memory Info:"
@@ -25,7 +24,10 @@ free -h || true
 echo
 
 echo "Running a quick workload..."
-uv run main.py
+uv run -m worker
+if [ $? -ne 0 ]; then
+    echo "Worker execution failed."
+    exit 1
+fi
 
-echo "Done."
 echo "End Time:      $(date)"
