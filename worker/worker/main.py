@@ -3,6 +3,7 @@ import time
 
 from worker.manager_client import ManagerClient
 from worker.system import collect_worker_identity
+from sv.runner import Runner
 
 
 dotenv.load_dotenv()
