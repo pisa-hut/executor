@@ -1,3 +1,4 @@
+from typing import Any
 import requests
 import os
 
@@ -16,7 +17,7 @@ class ManagerClient:
         r.raise_for_status()
         return r.json()
 
-    def claim_task(self, worker_id: int) -> dict[str, dict[str, str | int]] | None:
+    def claim_task(self, worker_id: int) -> dict[str, dict[str, Any]] | None:
         r = requests.post(
             f"{self.manager_url}/task/claim",
             json={"worker_id": worker_id},
