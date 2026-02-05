@@ -1,5 +1,8 @@
 .venv/
-logs/
-.env
 worker/**/*.py[cod]
 worker.sif
+
+.env
+
+logs/
+output_dir/

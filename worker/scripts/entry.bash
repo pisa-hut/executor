@@ -1,7 +1,7 @@
 #!/bin/bash
 
 source /opt/autoware/setup.bash
-cd ../../sbsvf/
-just setup
-cd ../sq/worker/
+pushd ../../sbsvf/
+just setup > /dev/null 2>&1
+popd
 python3 -m worker
