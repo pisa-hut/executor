@@ -1,7 +1,6 @@
 import dotenv
 from pprint import pprint
 from typing import Any
-import grpc
 
 from worker.manager_client import ManagerClient
 from worker.system import collect_worker_identity
