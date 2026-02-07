@@ -4,6 +4,7 @@ from typing import Any
 
 from worker.manager_client import ManagerClient
 from worker.system import collect_worker_identity
+from worker.apptainer_service import ApptainerServiceManager
 
 dotenv.load_dotenv()
 
@@ -44,13 +45,52 @@ def main():
         },
     }
     spec["scenario"]["param_path"] = None
+    spec["simulator"] = {
+        "name": "carla",
+    }
 
     pprint(spec)
-
     print(f"Claimed task: {task_id}")
 
-    print(f"Completed task: {task_id}")
-    client.complete_task(task_id)
+    # Initialize the Apptainer service manager
+    service_manager = ApptainerServiceManager()
+
+    # Get component names and start appropriate Apptainer services
+    simulator_name = spec.get("simulator", {}).get("name", "unknown")
+    av_name = spec.get("av", {}).get("name", "unknown")
+
+    print(f"Simulator: {simulator_name}")
+    print(f"AV: {av_name}")
+
+    # Start simulator service and get URL
+    simulator_service_info = service_manager.start_simulator_service(simulator_name)
+    if simulator_service_info:
+        spec["simulator"]["service_info"] = simulator_service_info
+        print(f"Simulator service available at: {simulator_service_info['url']}")
+
+    # Start AV service and get URL (if needed in the future)
+    av_service_info = service_manager.start_av_service(av_name)
+    if av_service_info:
+        spec["av"]["service_info"] = av_service_info
+        print(f"AV service available at: {av_service_info['url']}")
+
+    try:
+        # Run the scenario runner in Apptainer container
+        print("Starting scenario runner...")
+        exit_code = service_manager.run_runner(
+            spec, task_id=task_id, worker_id=worker_info["id"]
+        )
+
+        if exit_code == 0:
+            print(f"Completed task: {task_id}")
+            client.complete_task(task_id)
+        else:
+            print(f"Task failed with exit code: {exit_code}")
+            # TODO: Report task failure to manager
+    finally:
+        # Always stop all Apptainer services, even if the task fails
+        print("Cleaning up Apptainer services...")
+        service_manager.stop_all_services()
 
 
 if __name__ == "__main__":

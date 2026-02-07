@@ -1,0 +1,7 @@
+default: (pull)
+
+pull:
+    apptainer pull carla-wrapper.sif docker://tonychi/carla-wrapper:latest
+
+clean:
+    rm -f carla-wrapper.sif
