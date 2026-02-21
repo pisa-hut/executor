@@ -69,7 +69,7 @@ class Runner:
             # self.sim.init(sim_spec=sim_spec, dt=self._dt_s)
         except Exception:
             logger.exception("Simulator initialization failed")
-            return
+            raise
 
         try:
             self.av = AVWrapper(
@@ -81,7 +81,7 @@ class Runner:
             # self.av.init(av_spec=av_spec, dt=self._dt_s)
         except Exception:
             logger.exception("AV initialization failed")
-            return
+            raise
 
         # module = importlib.import_module(bridge_spec["module_path"].split(":")[0])
         # bridge_class = getattr(module, bridge_spec["module_path"].split(":")[1])

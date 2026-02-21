@@ -154,7 +154,7 @@ class ScenarioPack:
         map_name = map_spec["name"]
         ego = EgoConfig.from_dict(
             scenario_spec["goal_config"],
-            xodr_path=Path(map_spec["xodr_path"]).resolve(),
+            xodr_path=Path(f"{map_spec['xodr_path']}/{map_name}.xodr").resolve(),
             rmlib_path=Path(
                 scenario_spec.get("rmlib_path", "libesminiRMLib.so")
             ).resolve(),
