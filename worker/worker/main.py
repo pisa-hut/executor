@@ -7,7 +7,7 @@ import logging
 
 from worker.manager_client import ManagerClient
 from worker.system import collect_worker_identity
-from worker.apptainer_utils.apptainer_service import ApptainerServiceManager
+from worker.apptainer_utils.apptainer_manager import ApptainerServiceManager
 
 from worker.runner.runner import Runner
 

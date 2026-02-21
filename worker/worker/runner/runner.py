@@ -44,8 +44,6 @@ class Runner:
             "config_path": "configs/monitor/default.yaml",
         }
 
-        self._runtime_spec = runtime_spec
-
         self._id = task_spec.get("worker_id", "default_worker")
 
         self._dt_s = runtime_spec.get("dt", None)
@@ -118,7 +116,6 @@ class Runner:
         otherwise, it will run a single concrete scenario.
         """
         try:
-            # --- run ---
             if self.param_sampler is not None:
                 logger.info("Starting parameter sampling execution.")
                 total = self.param_sampler.total_permutations()
@@ -137,16 +134,14 @@ class Runner:
                     cur_output_dir = self.output_dir / f"iteration_{i+1}"
                     cur_output_dir.mkdir(parents=True, exist_ok=True)
                     try:
-                        self.run_concrete(
-                            cur_output_dir, self._runtime_spec, self.sps, params
-                        )
+                        self.run_concrete(cur_output_dir, self.sps, params)
                     except Exception:
                         logger.exception(f"Scenario failed at iteration {i+1}")
                         continue
             else:
                 logger.info("Running a single concrete scenario.")
                 try:
-                    self.run_concrete(self.output_dir, self._runtime_spec, self.sps)
+                    self.run_concrete(self.output_dir, self.sps)
                 except Exception:
                     logger.exception("Scenario failed")
 
@@ -158,7 +153,6 @@ class Runner:
     def run_concrete(
         self,
         output_dir: Path,
-        runtime_spec: dict,
         sps: ScenarioPack,
         params: Optional[dict[str, Any]] = None,
     ) -> None:
@@ -195,13 +189,11 @@ class Runner:
             prev = time()
 
         sim_time_ns = 0  # Simulation time in nanoseconds
-        # ctrl_for_sim: Ctrl = Ctrl()
         logger.info("Starting execution loop. using dt_s=%.3f", dt_s)
         try:
             real_start_time_s = time()
             while True:
                 loop_start_time = time()
-
                 if self.sim.should_quit():
                     logger.info("Simulator requested to quit.")
                     break
@@ -213,6 +205,7 @@ class Runner:
                     t = time()
                     dt_ns = int((t - prev) * 1e9)
                     prev = t
+
                 raw_obs = self.sim.step(ctrl_for_sim, sim_time_ns)
                 ctrl_for_sim = self.av.step(raw_obs, sim_time_ns)
                 sim_time_ns += dt_ns
@@ -227,11 +220,10 @@ class Runner:
 
                 print(
                     f"time use = {time_use_s:.2f} s, sim_time = {sim_time_ns / 1e9:.2f} s",
-                    end="  \r",
+                    end="\r",
                 )
 
             sim_time_need = time() - real_start_time_s
-            # self.monitor.finalize()
 
         except Exception as e:
             logger.error(f"Error during scenario execution: {e}")

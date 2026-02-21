@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from worker.apptainer_config import ApptainerServiceConfig
+from worker.apptainer_utils.apptainer_config import ApptainerServiceConfig
 
 logger = logging.getLogger(__name__)
 
