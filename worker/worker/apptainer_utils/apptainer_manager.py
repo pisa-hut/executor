@@ -6,6 +6,7 @@ import subprocess
 import time
 from typing import Any, Optional
 
+from worker.utils import resolve_host_path
 from worker.apptainer_utils.apptainer_config import ApptainerServiceConfig
 
 logger = logging.getLogger(__name__)
@@ -70,9 +71,7 @@ class ApptainerServiceManager:
         spec: dict[str, Any],
         key: str,
     ) -> str:
-        SBSVF_DIR = os.getenv("SBSVF_DIR", "/opt/sbsvf")
-        path = os.path.join(SBSVF_DIR, spec.get(key))
-        resolved_path = Path(path).resolve()
+        resolved_path = Path(resolve_host_path(spec.get(key)))
         if not resolved_path.exists():
             raise FileNotFoundError(
                 f"Host path for key '{key}' does not exist: {resolved_path}"
@@ -193,20 +192,23 @@ class ApptainerServiceManager:
         }
 
         started_specs: dict[str, dict[str, Any]] = {
-            "simulator": dict(base_started_spec),
-            "av": dict(base_started_spec),
+            "simulator": {
+                "service_info": {
+                    "url": (
+                        simulator_service_info.get("url")
+                        if simulator_service_info
+                        else None
+                    )
+                },
+                **dict(base_started_spec),
+            },
+            "av": {
+                "service_info": {
+                    "url": av_service_info.get("url") if av_service_info else None
+                },
+                **dict(base_started_spec),
+            },
         }
-
-        if simulator_service_info is not None:
-            started_specs["simulator"]["service_info"] = {
-                "url": simulator_service_info["url"],
-            }
-
-        if av_service_info is not None:
-            started_specs["av"]["service_info"] = {
-                "url": av_service_info["url"],
-            }
-
         return started_specs
 
     def stop_all_services(self):

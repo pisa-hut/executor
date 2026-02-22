@@ -9,6 +9,7 @@ from worker.apptainer_utils.apptainer_manager import ApptainerServiceManager
 from worker.manager_client import ManagerClient
 from worker.runner.runner import Runner
 from worker.system import collect_worker_identity
+from worker.utils import resolve_host_path
 
 dotenv.load_dotenv()
 
@@ -95,7 +96,7 @@ def main():
             "output_dir": output_dir,
         },
         "simulator": {
-            "config_path": claimed_simulator.get("config_path"),
+            "config_path": resolve_host_path(claimed_simulator.get("config_path")),
             "map": simulator_started_spec.get("map", {}),
             "scenario": {
                 "title": claimed_scenario.get("title"),
@@ -105,7 +106,7 @@ def main():
             "url": simulator_started_spec.get("service_info", {}).get("url", {}),
         },
         "av": {
-            "config_path": claimed_av.get("config_path"),
+            "config_path": resolve_host_path(claimed_av.get("config_path")),
             "map": av_started_spec.get("map", {}),
             "scenario": {
                 "title": claimed_scenario.get("title"),
@@ -114,12 +115,21 @@ def main():
             "output_path": av_started_spec.get("output_path", {}),
             "url": av_started_spec.get("service_info", {}).get("url", {}),
         },
-        "map": copy.deepcopy(claimed_map),
+        "map": {
+            "name": claimed_map.get("name"),
+            "osm_path": resolve_host_path(claimed_map.get("osm_path")),
+            "xodr_path": resolve_host_path(claimed_map.get("xodr_path")),
+        },
         "scenario": {
             "goal_config": claimed_scenario.get("goal_config"),
             "title": claimed_scenario.get("title"),
-            "scenario_path": claimed_scenario.get("scenario_path"),
-            "rmlib_path": os.getenv("RMLIB_PATH", "libesminiRMLib.so"),
+            "scenario_path": resolve_host_path(claimed_scenario.get("scenario_path")),
+            "rmlib_path": resolve_host_path(
+                os.getenv(
+                    "RMLIB_PATH",
+                    f"{os.getenv('SBSVF_DIR', '/opt/sbsvf')}/lib/libesminiRMLib.so",
+                )
+            ),
         },
         "sampler": copy.deepcopy(claimed_spec.get("sampler", {})),
     }
@@ -130,9 +140,10 @@ def main():
     try:
         runner = Runner(runner_spec)
         runner.exec()
-    except Exception:
-        logger.exception("Runner execution failed")
-        client.task_failed(task_id, "Runner execution failed")
+    except Exception as exc:
+        err_msg = f"{type(exc).__name__}: {str(exc)}"
+        logger.exception(f"Task execution failed with error: {err_msg}")
+        client.task_failed(task_id, reason=err_msg)
     else:
         client.task_succeeded(task_id)
     finally:
