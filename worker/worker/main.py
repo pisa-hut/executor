@@ -8,7 +8,7 @@ from worker.apptainer_utils.apptainer_manager import ApptainerServiceManager
 from worker.manager_client import ManagerClient
 from worker.runner.runner import Runner
 from worker.system import collect_worker_identity
-from worker.utils import _build_runner_spec, _build_services_spec
+from worker.utils import build_runner_spec, build_services_spec
 
 dotenv.load_dotenv()
 
@@ -76,7 +76,7 @@ def main():
     claimed_map = dict(claimed_spec.get("map", {}))
     logger.info("Claimed scenario: %s", claimed_scenario.get("title", "unknown"))
 
-    services_spec = _build_services_spec(
+    services_spec = build_services_spec(
         claimed_simulator=claimed_simulator,
         claimed_av=claimed_av,
         claimed_map=claimed_map,
@@ -94,7 +94,7 @@ def main():
         )
         logger.info("Started services: %s", list(started_specs.keys()))
 
-        runner_spec = _build_runner_spec(
+        runner_spec = build_runner_spec(
             claimed_spec=claimed_spec,
             claimed_simulator=claimed_simulator,
             claimed_av=claimed_av,

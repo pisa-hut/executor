@@ -1,4 +1,6 @@
+import copy
 import os
+from typing import Any
 
 
 def resolve_host_path(host_path: str) -> str:
@@ -20,15 +22,13 @@ def resolve_host_path(host_path: str) -> str:
     return absolute_path
 
 
-def _build_services_spec(
+def build_services_spec(
     claimed_simulator: dict[str, Any],
     claimed_av: dict[str, Any],
     claimed_map: dict[str, Any],
     claimed_scenario: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    worker_scenario_path = claimed_scenario.get("scenairo_path")
-    if worker_scenario_path is None:
-        worker_scenario_path = claimed_scenario.get("scenario_path")
+    worker_scenario_path = claimed_scenario.get("scenario_path")
 
     return {
         "simulator": {
@@ -47,12 +47,12 @@ def _build_services_spec(
             "xodr_path": claimed_map.get("xodr_path"),
         },
         "scenario": {
-            "scenairo_path": worker_scenario_path,
+            "scenario_path": worker_scenario_path,
         },
     }
 
 
-def _build_runner_spec(
+def build_runner_spec(
     claimed_spec: dict[str, dict[str, Any]],
     claimed_simulator: dict[str, Any],
     claimed_av: dict[str, Any],

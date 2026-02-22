@@ -154,7 +154,7 @@ class ApptainerServiceManager:
 
         scenario_host = self._require_existing_path_from_spec(
             spec=scenario_spec,
-            key="scenairo_path",
+            key="scenario_path",
         )
 
         output_host = str(Path(output_dir).resolve())
