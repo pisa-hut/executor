@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: tonychi/esmini-wrapper:latest
+From: ghcr.io/lolainta/autoware-wrapper:main
 
 %startscript
 #!/bin/bash
