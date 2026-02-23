@@ -1,8 +1,9 @@
+import argparse
 import dotenv
 import logging
 import os
 from pprint import pprint
-from typing import Any, Optional
+from typing import Any
 
 from worker.apptainer_utils.apptainer_manager import ApptainerServiceManager
 from worker.manager_client import ManagerClient
@@ -18,18 +19,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[logging.StreamHandler()],
 )
-
-
-def _claim_task_spec(
-    client: ManagerClient,
-    worker_id: int,
-) -> Optional[dict[str, dict[str, Any]]]:
-    response = client.claim_task(worker_id)
-    if response is None:
-        logger.info("No tasks available to claim.")
-        return None
-    assert isinstance(response, dict)
-    return response
 
 
 def _execute_runner_task(
@@ -54,18 +43,71 @@ def _execute_runner_task(
         client.task_succeeded(task_id)
 
 
+def parse_args(
+    avs: dict[str, int], simulators: dict[str, int], samplers: dict[str, int]
+) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Worker process that claims and executes tasks from the manager."
+    )
+    parser.add_argument(
+        "--plan-id",
+        type=int,
+        default=None,
+        help="ID of the plan to filter tasks by (optional)",
+    )
+    parser.add_argument(
+        "--av",
+        type=str,
+        choices=list(avs.keys()),
+        default=None,
+        help="Name of the AV to filter tasks by (optional)",
+    )
+    parser.add_argument(
+        "--simulator",
+        type=str,
+        choices=list(simulators.keys()),
+        default=None,
+        help="Name of the simulator to filter tasks by (optional)",
+    )
+    parser.add_argument(
+        "--sampler",
+        type=str,
+        choices=list(samplers.keys()),
+        default=None,
+        help="Name of the sampler to filter tasks by (optional)",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level (e.g., DEBUG, INFO, WARNING, ERROR)",
+    )
+    return parser.parse_args()
+
+
 def main():
-    logger.info("Starting worker...")
     client = ManagerClient()
+    client.fetch()  # Fetch AVs, simulators, and samplers to cache their IDs
+
+    args = parse_args(client.avs, client.simulators, client.samplers)
+    logger.setLevel(getattr(logging, args.log_level.upper()))
+
+    logger.info("Starting worker...")
     slurm_info = collect_worker_identity()
-    worker_info = client.register_worker(slurm_info)
-    logger.info("Registered worker with ID: %s", worker_info["id"])
 
     job_id = slurm_info.get("job_id", "unknown")
-    assert isinstance(worker_info["id"], int)
 
-    claimed_spec = _claim_task_spec(client, worker_info["id"])
+    claimed_spec = client.claim_task_spec(
+        slurm_info,
+        plan_id=args.plan_id,
+        av_name=args.av,
+        simulator_name=args.simulator,
+        sampler_name=args.sampler,
+    )
+
     if claimed_spec is None:
+        logger.info("No task claimed. Worker will exit.")
         return
 
     task_id = claimed_spec.get("task", {}).get("id")
