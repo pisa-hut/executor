@@ -12,6 +12,7 @@ from sbsvf_api import (
     path_pb2,
 )
 
+from worker.runner.exception.av import RouteNotFoundError
 from worker.runner.utils.sps import ScenarioPack
 from worker.runner.utils.util import get_cfg
 
@@ -99,7 +100,12 @@ class AVWrapper:
             resp = self._stub.Reset(req, timeout=self._timeout)
             return resp.ctrl_cmd
         except grpc.RpcError as e:
-            raise RuntimeError(f"Reset failed: {e.code().name} - {e.details()}") from e
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                raise RuntimeError("AV route not found during reset")
+            else:
+                raise RuntimeError(
+                    f"Reset failed: {e.code().name} - {e.details()}"
+                ) from e
 
     def step(self, obs, time_stamp_ns: int):
         self._ensure_ready()

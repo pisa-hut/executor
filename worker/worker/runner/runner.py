@@ -10,6 +10,8 @@ from worker.runner.av_wrapper import AVWrapper
 from worker.runner.utils.sps import ScenarioPack
 from worker.runner.sim_wrapper import SimWrapper
 
+RETRY_ROUTE_NOT_FOUND_MAX = 10
+
 logger = logging.getLogger(__name__)
 
 
@@ -113,6 +115,8 @@ class Runner:
 
                 logger.info(f"Total parameter combinations: {total}")
 
+                route_not_found_count = 0
+
                 for i in range(total):
                     logger.info(f"Sampling iteration {i+1}/{total}")
                     params = self.param_sampler.next()
@@ -124,9 +128,24 @@ class Runner:
                     logger.info(f"Running scenario with parameters: {params}")
                     try:
                         self.run_concrete(f"iteration_{i+1}", self.sps, params)
-                    except KeyboardInterrupt:
-                        logger.warning("Execution interrupted by user. Stopping.")
-                        raise KeyboardInterrupt
+                    except RuntimeError as e:
+                        if "AV route not found during reset" in str(e):
+                            logger.warning(
+                                f"Encountered known issue during scenario execution: {str(e)}. This can be caused by the AV server not properly handling route points. Attempting to continue to next scenario."
+                            )
+                            route_not_found_count += 1
+                            if route_not_found_count >= RETRY_ROUTE_NOT_FOUND_MAX:
+                                logger.error(
+                                    f"Exceeded maximum retries for route not found errors ({RETRY_ROUTE_NOT_FOUND_MAX}). Aborting further execution."
+                                )
+                                break
+                            continue
+                        else:
+                            logger.error(
+                                f"RuntimeError during scenario execution: {str(e)}"
+                            )
+                            raise e
+
                     except Exception as exc:
                         logger.exception(f"Scenario failed at iteration {i+1}: {exc}")
                         continue
@@ -139,8 +158,6 @@ class Runner:
                     raise exc
 
             logger.info("Runner execution completed.")
-        except KeyboardInterrupt:
-            raise KeyboardInterrupt
         except Exception as exc:
             logger.exception(f"Runner execution failed: {exc}")
             raise exc
