@@ -85,7 +85,7 @@ def main():
         claimed_scenario=claimed_scenario,
     )
 
-    output_dir = str(f"./outputs/job_{job_id}_worker_{worker_id}")
+    output_dir = str(f"./outputs/job_{job_id}")
     os.makedirs(output_dir, exist_ok=True)
 
     service_manager = ApptainerServiceManager()
