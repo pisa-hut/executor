@@ -80,7 +80,7 @@ class SimWrapper:
 
     def reset(
         self,
-        output_dir: Path,
+        output_dir: str,
         scenario_pack: ScenarioPack,
         params: Optional[dict[str, str]] = {},
     ):

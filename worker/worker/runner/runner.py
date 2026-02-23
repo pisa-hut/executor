@@ -46,7 +46,7 @@ class Runner:
         logger.info(f"Runner ID: {self._id}")
 
         self.output_base = (
-            Path(task_spec.get("output_dir", "./output")).expanduser().resolve()
+            Path(task_spec.get("output_dir", "./outputs")).expanduser().resolve()
         )
         self.output_base.mkdir(parents=True, exist_ok=True)
         logger.info(f"Output base directory set to: {self.output_base}")
@@ -65,7 +65,6 @@ class Runner:
 
         try:
             self.av = AVWrapper(
-                output_dir=self.output_base,
                 av_spec=av_spec,
                 dt_ns=int(self._dt_s * 1e9),
                 sps=self.sps,
@@ -150,7 +149,7 @@ class Runner:
 
     def run_concrete(
         self,
-        output_related: Path,
+        output_related: str,
         sps: ScenarioPack,
         params: Optional[dict[str, Any]] = None,
     ) -> None:
@@ -160,6 +159,7 @@ class Runner:
         raw_obs = None
         output_path = self.output_base / output_related
         output_path.mkdir(parents=True, exist_ok=True)
+
         logger.info(
             f"Resetting simulator for scenario '{sps.name}' with map '{sps.map_name}'..."
         )

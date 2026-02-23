@@ -21,12 +21,10 @@ logger = logging.getLogger(__name__)
 class AVWrapper:
     def __init__(
         self,
-        output_dir: Path,
         av_spec: dict,
         dt_ns: int = None,
         sps: ScenarioPack = None,
     ):
-        self._output_dir = output_dir
         self._av_spec = av_spec
         self._sps = sps
 
@@ -39,6 +37,7 @@ class AVWrapper:
         self._url = self._av_spec.get("url", "localhost:50052")
         self._timeout = float(self._av_spec.get("timeout", 100.0))
         self._av_cfg_path = self._av_spec.get("config_path", None)
+        self._av_output_dir = self._av_spec.get("output_path", "/mnt/output")
 
         if self._av_cfg_path is not None:
             self._av_cfg = get_cfg(self._av_cfg_path)
@@ -71,7 +70,7 @@ class AVWrapper:
         config = config_pb2.Config(config=cfg_struct)
         request = av_server_pb2.AvServerMessages.InitRequest(
             config=config,
-            output_dir=path_pb2.Path(path=str(self._output_dir)),
+            output_dir=path_pb2.Path(path=str(self._av_output_dir)),
             scenario_pack=self._sps.to_protobuf() if self._sps is not None else None,
             dt=self._dt_s,
         )
@@ -84,15 +83,15 @@ class AVWrapper:
 
     def reset(
         self,
-        output_dir: Path,
+        output_dir: str,
         sps: ScenarioPack,
         init_obs: Optional[dict[str, Any]] = {},
     ):
-        self._output_dir = output_dir
+
         self._sps = sps
         self._ensure_ready()
         req = av_server_pb2.AvServerMessages.ResetRequest(
-            output_dir=path_pb2.Path(path=str(self._output_dir)),
+            output_dir=path_pb2.Path(path=str(output_dir)),
             scenario_pack=self._sps.to_protobuf(),
             initial_observation=init_obs,
         )
