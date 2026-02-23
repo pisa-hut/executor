@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=worker
-#SBATCH --output=logs/out.%j
-#SBATCH --error=logs/err.%j
-#SBATCH --time=01:00:00
+#SBATCH --output=outputs/job_%j/stdout
+#SBATCH --error=outputs/job_%j/stderr
+#SBATCH --time=06:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=20G
+#SBATCH --mem=10G
 
 echo "=== SLURM TEST JOB ==="
 echo "Cluster:       $SLURM_CLUSTER_NAME"
