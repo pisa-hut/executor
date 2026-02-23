@@ -15,11 +15,6 @@ TestResult = Dict[str, Any]
 
 
 class Sampler:
-    """
-    非強制繼承，只是當作型別說明用。
-    你也可以改成 Protocol，不影響下面設計。
-    """
-
     def next(
         self,
         past_results: Optional[Iterable[TestResult]] = None,
@@ -98,4 +93,3 @@ class BaseSampler(Sampler):
     def update_with_results(self, past_results: Optional[Iterable[TestResult]]):
         if not past_results:
             return
-        # 這裡之後可以放共用的統計 / logging

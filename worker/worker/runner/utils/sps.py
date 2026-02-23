@@ -39,11 +39,9 @@ class GoalConfig:
 @dataclass
 class EgoConfig:
     target_speed: float
-    # check_points: List[CheckPointConfig]
     goal: GoalConfig
-    spawn: SpawnConfig = field(default=None)  # 如果 spawn 是選填的話
+    spawn: SpawnConfig = field(default=None)
 
-    # ---- 解析 YAML 的工廠方法 ----
     @classmethod
     def from_dict(
         cls, ego: Dict[str, Any], xodr_path: Path, rmlib_path: Path
@@ -56,16 +54,16 @@ class EgoConfig:
         try:
             target_speed = float(ego["target_speed"])
         except KeyError:
-            raise ValueError("ego.target_speed 未設定") from None
+            raise ValueError("ego.target_speed not defined") from None
         except (TypeError, ValueError):
             raise ValueError(
-                f"ego.target_speed 必須是數字，現在是 {ego.get('target_speed')!r}"
+                f"ego.target_speed must be a number, got {ego.get('target_speed')!r}"
             )
 
         try:
             goal_raw = ego["position"]
         except KeyError:
-            raise ValueError("ego.position 未設定")
+            raise ValueError("ego.position not defined")
 
         if goal_raw["type"] == "LanePosition":
             goal_pos = position_factory.from_lane(
@@ -100,32 +98,6 @@ class EgoConfig:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return cls.from_dict(data)
-
-    # ---- 這裡做你要的 xosc 路徑/物件轉換 ----
-    def to_xosc_route(self):
-        """
-        這裡依你的 sps.scenarios.xosc 實際 API 去改。
-        假設它有 xosc.Route 之類的物件可以拿來建路徑。
-        """
-        # 範例：把 lane-based 的點轉成 route waypoints（超簡化示意）
-        lane_points = []
-        for cp in self.check_points + [self.goal]:
-            if cp.type != "LanePosition":
-                # 如果你希望 check_point 一律要寫「道」(LanePosition)，這裡就丟錯
-                raise ValueError(
-                    f"生成 xosc 路徑時，check_point/goal 必須是 LanePosition，但遇到 {cp.type}"
-                )
-            road_id, lane_id, s, offset = cp.value[:4]
-            lane_points.append(
-                {
-                    "road_id": road_id,
-                    "lane_id": lane_id,
-                    "s": s,
-                    "offset": offset,
-                }
-            )
-
-        return lane_points  # 先回傳整理好的資料結構給你看
 
     def to_protobuf(self) -> scenario_pb2.EgoConfig:
         return scenario_pb2.EgoConfig(
