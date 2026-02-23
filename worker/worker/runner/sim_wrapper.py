@@ -23,9 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class SimWrapper:
-    def __init__(self, output_dir: Path, sim_spec: dict, dt_ns: int = None):
+    def __init__(self, sim_spec: dict, dt_ns: int = None):
         self._sim_spec = sim_spec
-        self._output_dir = output_dir
 
         if dt_ns is None:
             logger.warning("dt not specified for SimWrapper, defaulting to 0.01s")
@@ -36,6 +35,7 @@ class SimWrapper:
         self._url = self._sim_spec.get("url", "localhost:50053")
         self._timeout = float(self._sim_spec.get("timeout", 10.0))
         self._sim_cfg_path = self._sim_spec.get("config_path", None)
+        self._sim_output_dir = self._sim_spec.get("output_path", "/mnt/output")
 
         if self._sim_cfg_path is not None:
             self._sim_cfg = get_cfg(self._sim_cfg_path)
@@ -68,8 +68,7 @@ class SimWrapper:
         config = config_pb2.Config(config=cfg_struct)
         request = sim_server_pb2.SimServerMessages.InitRequest(
             config=config,
-            # output_dir=path_pb2.Path(path=str(self._output_dir)),
-            output_dir=path_pb2.Path(path=str(".")),
+            output_dir=path_pb2.Path(path=str(self._sim_output_dir)),
             dt=self._dt_s,
         )
         response = self._stub.Init(request, timeout=self._timeout)
@@ -87,7 +86,7 @@ class SimWrapper:
     ):
         self._ensure_ready()
         req = sim_server_pb2.SimServerMessages.ResetRequest(
-            output_dir=path_pb2.Path(path=str(".")),
+            output_dir=path_pb2.Path(path=str(output_dir)),
             scenario_pack=scenario_pack.to_protobuf(),
             params=params,
         )

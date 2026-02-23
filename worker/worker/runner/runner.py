@@ -45,16 +45,16 @@ class Runner:
 
         logger.info(f"Runner ID: {self._id}")
 
-        base = Path(task_spec.get("output_dir", "artifacts")).expanduser().resolve()
-        self.output_dir = base / self._id
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Output directory set to: {self.output_dir}")
+        self.output_base = (
+            Path(task_spec.get("output_dir", "./output")).expanduser().resolve()
+        )
+        self.output_base.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Output base directory set to: {self.output_base}")
 
         self.sps = ScenarioPack.from_dict(scenario_spec, map_spec)
 
         try:
             self.sim = SimWrapper(
-                output_dir=self.output_dir,
                 sim_spec=sim_spec,
                 dt_ns=int(self._dt_s * 1e9),
             )
@@ -65,7 +65,7 @@ class Runner:
 
         try:
             self.av = AVWrapper(
-                output_dir=self.output_dir,
+                output_dir=self.output_base,
                 av_spec=av_spec,
                 dt_ns=int(self._dt_s * 1e9),
                 sps=self.sps,
@@ -123,10 +123,8 @@ class Runner:
                         break
 
                     logger.info(f"Running scenario with parameters: {params}")
-                    cur_output_dir = self.output_dir / f"iteration_{i+1}"
-                    cur_output_dir.mkdir(parents=True, exist_ok=True)
                     try:
-                        self.run_concrete(cur_output_dir, self.sps, params)
+                        self.run_concrete(f"iteration_{i+1}", self.sps, params)
                     except KeyboardInterrupt:
                         logger.warning("Execution interrupted by user. Stopping.")
                         raise KeyboardInterrupt
@@ -136,7 +134,7 @@ class Runner:
             else:
                 logger.info("Running a single concrete scenario.")
                 try:
-                    self.run_concrete(self.output_dir, self.sps)
+                    self.run_concrete("concrete", self.sps)
                 except Exception as exc:
                     logger.exception(f"Scenario failed: {exc}")
                     raise exc
@@ -152,7 +150,7 @@ class Runner:
 
     def run_concrete(
         self,
-        output_dir: Path,
+        output_related: Path,
         sps: ScenarioPack,
         params: Optional[dict[str, Any]] = None,
     ) -> None:
@@ -160,19 +158,20 @@ class Runner:
         Run a single concrete scenario with the given parameters.
         """
         raw_obs = None
-
+        output_path = self.output_base / output_related
+        output_path.mkdir(parents=True, exist_ok=True)
         logger.info(
             f"Resetting simulator for scenario '{sps.name}' with map '{sps.map_name}'..."
         )
         try:
-            raw_obs = self.sim.reset(output_dir, sps, params)
+            raw_obs = self.sim.reset(output_related, sps, params)
         except Exception as e:
             logger.error(f"Simulator reset failed: {e}")
             raise e
 
         logger.info("Resetting AV...")
         try:
-            ctrl_for_sim = self.av.reset(output_dir, sps, raw_obs)
+            ctrl_for_sim = self.av.reset(output_related, sps, raw_obs)
         except Exception as e:
             logger.error(f"AV reset failed: {e}")
             raise e
