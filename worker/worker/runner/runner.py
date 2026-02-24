@@ -38,14 +38,10 @@ class Runner:
             "config_path": "configs/monitor/default.yaml",
         }
 
-        self._id = task_spec.get("worker_id", "default_worker")
-
         self._dt_s = runtime_spec.get("dt", None)
         if self._dt_s is None:
             logger.warning("No 'dt' specified in runtime_spec; defaulting to 0.01s")
             self._dt_s = 0.01
-
-        logger.info(f"Runner ID: {self._id}")
 
         self.output_base = (
             Path(task_spec.get("output_dir", "./outputs")).expanduser().resolve()
@@ -110,7 +106,7 @@ class Runner:
         """
         try:
             if self.param_sampler is not None:
-                logger.info("Starting parameter sampling execution.")
+                logger.debug("Starting parameter sampling execution.")
                 total = self.param_sampler.total_permutations()
 
                 logger.info(f"Total parameter combinations: {total}")
@@ -122,18 +118,15 @@ class Runner:
                     params = self.param_sampler.next()
 
                     if params is None:
-                        logger.info("Parameter sampling completed.")
+                        logger.debug("Parameter sampling completed.")
                         break
 
-                    logger.info(f"Running scenario with parameters: {params}")
+                    logger.debug(f"Running scenario with parameters: {params}")
                     try:
                         self.run_concrete(f"iteration_{i+1}", self.sps, params)
                     except RuntimeError as e:
                         if "AV route not found during reset" in str(e):
                             route_not_found_count += 1
-                            logger.warning(
-                                f"Encountered known issue during scenario execution: {str(e)}. This can be caused by the AV cannot find a valid route for the scenario, which may be due to limitations in the scenario design or the AV's routing capabilities. The current parameter combination will be skipped."
-                            )
                             logger.warning(
                                 f"RouteNotFoundError count: {route_not_found_count}/{RETRY_ROUTE_NOT_FOUND_MAX}"
                             )
@@ -143,13 +136,11 @@ class Runner:
                                 )
                             continue
                         else:
-                            logger.exception(
-                                f"Scenario failed at iteration {i+1} with unexpected error: {e}"
-                            )
-
+                            err_msg = f"Scenario execution failed at iteration {i+1} with error: {e}"
+                            logger.error(err_msg)
+                            raise RuntimeError(err_msg) from e
                     except Exception as exc:
-                        logger.error(f"Scenario failed at iteration {i+1}: {exc}")
-                        continue
+                        raise exc
                     else:
                         # Reset route_not_found_count after a successful execution
                         route_not_found_count = 0
@@ -181,9 +172,7 @@ class Runner:
         output_path = self.output_base / output_related
         output_path.mkdir(parents=True, exist_ok=True)
 
-        logger.info(
-            f"Resetting simulator for scenario '{sps.name}' with map '{sps.map_name}'..."
-        )
+        logger.info(f"Resetting simulator...")
         try:
             raw_obs = self.sim.reset(output_related, sps, params)
         except Exception as e:
