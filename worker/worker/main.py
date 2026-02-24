@@ -148,7 +148,7 @@ def main():
     os.symlink(output_dir, task_output_link)
     os.makedirs(output_dir, exist_ok=True)
 
-    service_manager = ApptainerServiceManager()
+    service_manager = ApptainerServiceManager(id=f"job{job_id}")
     try:
         started_specs = service_manager.start(
             services_spec=services_spec,

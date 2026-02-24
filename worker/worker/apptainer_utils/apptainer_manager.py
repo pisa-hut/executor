@@ -33,7 +33,8 @@ class ApptainerServiceManager:
     SCENARIO_CONTAINER_PATH = "/mnt/scenario"
     OUTPUT_CONTAINER_PATH = "/mnt/output"
 
-    def __init__(self):
+    def __init__(self, id: str):
+        self.id = id
         self.running_instances: dict[str, dict[str, int]] = {}
         self.component_to_instance: dict[str, str] = {}
 
@@ -117,7 +118,7 @@ class ApptainerServiceManager:
             return None
 
         allocated_port = allocated_ports["PORT"]
-        service_name = f"{component_name}-{allocated_port}"
+        service_name = f"{component_name}-{self.id}-{allocated_port}"
 
         try:
             command = config.get_start_command(service_name, allocated_ports)
