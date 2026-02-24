@@ -31,16 +31,21 @@ class ParameterSpec:
 def frange_inclusive(
     lower: float, upper: float, step: float, tol: float = 1e-9
 ) -> List[float]:
-    if step <= 0:
-        raise ValueError("step must be positive")
+    if (step <= 0 and upper > lower) or (step >= 0 and upper < lower):
 
-    n_steps = int(math.floor((upper - lower) / step + tol))
+        raise ValueError(f"Invalid step {step} for range [{lower}, {upper}]")
+
+    n_steps = int(math.floor((upper - lower) / step + tol)) if step != 0 else 0
     vals = []
     for i in range(n_steps + 1):
-        v = lower + i * step
-        if v > upper + tol:
+        val = lower + i * step
+        if (step > 0 and val > upper + tol) or (step < 0 and val < upper - tol):
             break
-        vals.append(v)
+        vals.append(val)
+
+    logger.info(
+        f"vals: {vals}, upper: {upper}, tol: {tol}, last_val: {vals[-1] if vals else 'N/A'}"
+    )
 
     # if vals and upper - vals[-1] > tol:
     #     vals.append(upper)
