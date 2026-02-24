@@ -137,25 +137,17 @@ class Runner:
                             continue
                         else:
                             err_msg = f"Scenario execution failed at iteration {i+1} with error: {e}"
-                            logger.error(err_msg)
                             raise RuntimeError(err_msg) from e
-                    except Exception as exc:
-                        raise exc
                     else:
-                        # Reset route_not_found_count after a successful execution
                         route_not_found_count = 0
             else:
                 logger.info("Running a single concrete scenario.")
                 try:
                     self.run_concrete("concrete", self.sps)
                 except Exception as exc:
-                    logger.error(f"Scenario failed: {exc}")
                     raise exc
 
             logger.info("Runner execution completed.")
-        except Exception as exc:
-            logger.error(f"Runner execution failed: {exc}")
-            raise exc
         finally:
             self.close()
 
@@ -239,7 +231,6 @@ class Runner:
         logger.info(
             f"Completed {sim_time_ns / 1e9:.2f} seconds scenario, using {sim_time_need:.2f} sec."
         )
-        logger.info("Scenario finished.")
 
     def close(self):
         try:
