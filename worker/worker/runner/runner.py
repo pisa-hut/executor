@@ -62,7 +62,7 @@ class Runner:
             )
             # self.sim.init(sim_spec=sim_spec, dt=self._dt_s)
         except Exception as exc:
-            logger.exception("Simulator initialization failed")
+            logger.error("Simulator initialization failed")
             raise exc
 
         try:
@@ -73,7 +73,7 @@ class Runner:
             )
             # self.av.init(av_spec=av_spec, dt=self._dt_s)
         except Exception as exc:
-            logger.exception("AV initialization failed")
+            logger.error("AV initialization failed")
             raise exc
 
         # module = importlib.import_module(bridge_spec["module_path"].split(":")[0])
@@ -152,7 +152,7 @@ class Runner:
                             raise e
 
                     except Exception as exc:
-                        logger.exception(f"Scenario failed at iteration {i+1}: {exc}")
+                        logger.error(f"Scenario failed at iteration {i+1}: {exc}")
                         continue
                     else:
                         # Reset route_not_found_count after a successful execution
@@ -162,12 +162,12 @@ class Runner:
                 try:
                     self.run_concrete("concrete", self.sps)
                 except Exception as exc:
-                    logger.exception(f"Scenario failed: {exc}")
+                    logger.error(f"Scenario failed: {exc}")
                     raise exc
 
             logger.info("Runner execution completed.")
         except Exception as exc:
-            logger.exception(f"Runner execution failed: {exc}")
+            logger.error(f"Runner execution failed: {exc}")
             raise exc
         finally:
             self.close()

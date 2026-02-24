@@ -143,7 +143,6 @@ class ApptainerServiceManager:
             }
         except Exception as exc:
             logger.exception("Failed to start Apptainer service: %s", exc)
-            return None
 
     def start(
         self,
@@ -238,7 +237,7 @@ class ApptainerServiceManager:
                 if proc.returncode != 0:
                     logger.error("Failed to stop Apptainer instance: %s", proc.stderr)
             except Exception as exc:
-                logger.exception(
+                logger.error(
                     "Failed to stop Apptainer instance %s: %s", service_name, exc
                 )
 

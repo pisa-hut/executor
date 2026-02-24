@@ -50,7 +50,7 @@ def _execute_runner_task(
             )
         else:
             err_msg = f"{type(exc).__name__}: {str(exc)}"
-            logger.exception("Task execution failed with error: %s", err_msg)
+            logger.error("Task execution failed with error: %s", err_msg)
             client.task_failed(task_id, reason=err_msg)
     else:
         logger.info("Task execution succeeded for task ID: %s", task_id)
@@ -163,7 +163,7 @@ def main():
         )
         _execute_runner_task(client=client, task_id=task_id, runner_spec=runner_spec)
     except Exception as exc:
-        logger.exception("Worker failed with error: %s", exc)
+        logger.error("Worker failed with error: %s", exc)
         if task_id is not None:
             err_msg = f"{type(exc).__name__}: {str(exc)}"
             client.task_failed(task_id, reason=err_msg)
