@@ -35,19 +35,16 @@ def _execute_runner_task(
         logger.warning("Task execution interrupted by user.")
         client.task_failed(task_id, reason="Task interrupted by user")
     except Exception as exc:
-        if isinstance(
-            exc, RuntimeError
-        ) and "Exceeded maximum retries for route not found errors" in str(exc):
-            logger.error(
-                f"Task execution failed due to repeated route not found errors: {exc}"
-            )
-            logger.warning(
-                "Marking task as invalid due to repeated route not found errors."
-            )
-            client.task_invalid(
-                task_id,
-                reason=f"Invalid task due to repeated route not found errors: {exc}",
-            )
+        if isinstance(exc, RuntimeError):
+            if "Exceeded maximum retries for route not found errors" in str(exc):
+                logger.error(
+                    f"Task execution failed due to repeated route not found errors: {exc}"
+                )
+            elif "AV reset timeout error" in str(exc):
+                logger.error(
+                    f"Task execution failed due to repeated AV reset timeout errors: {exc}"
+                )
+            client.task_invalid(task_id, reason=str(exc))
         else:
             err_msg = f"{type(exc).__name__}: {str(exc)}"
             logger.error("Task execution failed with error: %s", err_msg)
@@ -110,7 +107,7 @@ def main():
     logger.info("Starting worker...")
     slurm_info = collect_worker_identity()
 
-    job_id = slurm_info.get("job_id", "unknown")
+    job_id = int(slurm_info.get("job_id", "unknown"))
 
     claimed_spec = client.claim_task_spec(
         slurm_info,
@@ -141,14 +138,9 @@ def main():
     )
 
     output_dir = str(f"./outputs/job_{job_id}")
-    task_output_link = f"./outputs/task_{task_id}"
-    if os.path.islink(task_output_link) or os.path.exists(task_output_link):
-        os.remove(task_output_link)
-
-    os.symlink(output_dir, task_output_link)
     os.makedirs(output_dir, exist_ok=True)
 
-    service_manager = ApptainerServiceManager(id=f"job{job_id}")
+    service_manager = ApptainerServiceManager(id=f"job{job_id:02d}")
     try:
         started_specs = service_manager.start(
             services_spec=services_spec,

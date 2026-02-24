@@ -10,7 +10,9 @@ from worker.runner.av_wrapper import AVWrapper
 from worker.runner.utils.sps import ScenarioPack
 from worker.runner.sim_wrapper import SimWrapper
 
-RETRY_ROUTE_NOT_FOUND_MAX = 10
+ROUTE_NOT_FOUND_MAX_RETRY = 10
+AV_RESET_TIMEOUT_MAX_RETRY = 10
+
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +114,7 @@ class Runner:
                 logger.info(f"Total parameter combinations: {total}")
 
                 route_not_found_count = 0
+                av_reset_timeout_count = 0
 
                 for i in range(total):
                     logger.info(f"Sampling iteration {i+1}/{total}")
@@ -128,18 +131,29 @@ class Runner:
                         if "AV route not found during reset" in str(e):
                             route_not_found_count += 1
                             logger.warning(
-                                f"RouteNotFoundError count: {route_not_found_count}/{RETRY_ROUTE_NOT_FOUND_MAX}"
+                                f"RouteNotFoundError count: {route_not_found_count}/{ROUTE_NOT_FOUND_MAX_RETRY}"
                             )
-                            if route_not_found_count >= RETRY_ROUTE_NOT_FOUND_MAX:
-                                logger.exception(
-                                    f"Exceeded maximum retries for route not found errors ({RETRY_ROUTE_NOT_FOUND_MAX}). Aborting further execution."
-                                )
+                            if route_not_found_count >= ROUTE_NOT_FOUND_MAX_RETRY:
+                                raise RuntimeError(
+                                    f"Exceeded maximum retries for route not found errors: {route_not_found_count} occurrences. Aborting further execution."
+                                ) from e
+                            continue
+                        elif "AV timed out during reset" in str(e):
+                            av_reset_timeout_count += 1
+                            logger.warning(
+                                f"AV reset timeout error count: {av_reset_timeout_count}/{AV_RESET_TIMEOUT_MAX_RETRY}"
+                            )
+                            if av_reset_timeout_count >= AV_RESET_TIMEOUT_MAX_RETRY:
+                                raise RuntimeError(
+                                    f"Exceeded maximum retries for AV reset timeout errors: {av_reset_timeout_count} occurrences. Aborting further execution."
+                                ) from e
                             continue
                         else:
                             err_msg = f"Scenario execution failed at iteration {i+1} with error: {e}"
                             raise RuntimeError(err_msg) from e
                     else:
                         route_not_found_count = 0
+                        av_reset_timeout_count = 0
             else:
                 logger.info("Running a single concrete scenario.")
                 try:

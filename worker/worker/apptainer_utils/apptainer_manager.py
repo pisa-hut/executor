@@ -1,6 +1,6 @@
 import logging
-import os
 from pathlib import Path
+import random
 import socket
 import subprocess
 import time
@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 def find_free_port(start_port: int = 8000, max_attempts: int = 100) -> Optional[int]:
-    for port in range(start_port, start_port + max_attempts):
+    for _ in range(max_attempts):
+        port = random.randint(start_port, start_port + 2000)
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.bind(("", port))
@@ -90,6 +91,7 @@ class ApptainerServiceManager:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 result = sock.connect_ex(("localhost", port))
                 if result == 0:
+                    logger.info("Service on port %s is up", port)
                     return True
             time.sleep(1)
         logger.error(
@@ -121,7 +123,9 @@ class ApptainerServiceManager:
         service_name = f"{component_name}-{self.id}-{allocated_port}"
 
         try:
-            command = config.get_start_command(service_name, allocated_ports)
+            command = config.get_start_command(
+                service_name, allocated_ports, int(self.id[-2:])
+            )
             logger.info("Running command: %s", " ".join(command))
             proc = self._run_command(command)
             if proc.returncode != 0:

@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any, Optional
 import logging
 
@@ -101,7 +100,16 @@ class AVWrapper:
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
                 raise RuntimeError("AV route not found during reset")
+            elif e.code() == grpc.StatusCode.UNAVAILABLE:
+                pass
             else:
+                if (
+                    "Autoware localization initialization timed out." in e.details()
+                    or "Autoware planning timed out." in e.details()
+                ):
+                    raise RuntimeError(
+                        f"AV timed out during reset: {e.details()}"
+                    ) from e
                 raise RuntimeError(
                     f"Reset failed: {e.code().name} - {e.details()}"
                 ) from e
