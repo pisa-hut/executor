@@ -36,7 +36,13 @@ def _execute_runner_task(
         client.task_failed(task_id, reason="Task interrupted by user")
     except Exception as exc:
         if isinstance(exc, RuntimeError):
-            if "Exceeded maximum retries for route not found errors" in str(exc):
+            if "(previous iterations succeeded, but this one failed)" in str(exc):
+                logger.error(
+                    f"Task execution failed at a later iteration after some successes: {exc}"
+                )
+                client.task_failed(task_id, reason=str(exc))
+                return
+            elif "Exceeded maximum retries for route not found errors" in str(exc):
                 logger.error(
                     f"Task execution failed due to repeated route not found errors: {exc}"
                 )

@@ -106,6 +106,7 @@ class AVWrapper:
                 if (
                     "Autoware localization initialization timed out." in e.details()
                     or "Autoware planning timed out." in e.details()
+                    or "Autoware ready to engage timed out." in e.details()
                 ):
                     raise RuntimeError(
                         f"AV timed out during reset: {e.details()}"

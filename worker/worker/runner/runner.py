@@ -150,6 +150,8 @@ class Runner:
                             continue
                         else:
                             err_msg = f"Scenario execution failed at iteration {i+1} with error: {e}"
+                            if i > 0:
+                                err_msg += f" (previous iterations succeeded, but this one failed)"
                             raise RuntimeError(err_msg) from e
                     else:
                         route_not_found_count = 0
