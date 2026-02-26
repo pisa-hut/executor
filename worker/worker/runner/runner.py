@@ -112,6 +112,7 @@ class Runner:
 
                 logger.info(f"Total parameter combinations: {total}")
 
+                successed = False
                 av_reset_timeout_count = 0
 
                 for i in range(total):
@@ -125,6 +126,7 @@ class Runner:
                     logger.debug(f"Running scenario with parameters: {params}")
                     try:
                         self.run_concrete(f"iteration_{i+1}", self.sps, params)
+                        successed = True
                     except RuntimeError as e:
                         if "AV timed out during reset" in str(e):
                             av_reset_timeout_count += 1
@@ -132,13 +134,18 @@ class Runner:
                                 f"AV reset timeout error count: {av_reset_timeout_count}/{AV_RESET_TIMEOUT_MAX_RETRY}"
                             )
                             if av_reset_timeout_count >= AV_RESET_TIMEOUT_MAX_RETRY:
-                                raise RuntimeError(
-                                    f"Exceeded maximum retries for AV reset timeout errors: {av_reset_timeout_count} occurrences. Aborting further execution."
-                                ) from e
+                                if not successed:
+                                    raise RuntimeError(
+                                        f"Exceeded maximum retries for AV reset timeout errors: {av_reset_timeout_count} occurrences. Aborting further execution."
+                                    ) from e
+                                else:
+                                    raise RuntimeError(
+                                        f"AV reset timeout error occurred at iteration {i+1} with error: {e} (previous iterations succeeded, but this one failed)"
+                                    ) from e
                             continue
                         else:
                             err_msg = f"Scenario execution failed at iteration {i+1} with error: {e}"
-                            if i > 0:
+                            if successed:
                                 err_msg += f" (previous iterations succeeded, but this one failed)"
                             raise RuntimeError(err_msg) from e
                     else:
