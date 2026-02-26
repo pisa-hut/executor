@@ -98,22 +98,9 @@ class AVWrapper:
             resp = self._stub.Reset(req, timeout=self._timeout)
             return resp.ctrl_cmd
         except grpc.RpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
-                raise RuntimeError("AV route not found during reset")
-            elif e.code() == grpc.StatusCode.UNAVAILABLE:
-                pass
-            else:
-                if (
-                    "Autoware localization initialization timed out." in e.details()
-                    or "Autoware planning timed out." in e.details()
-                    or "Autoware ready to engage timed out." in e.details()
-                ):
-                    raise RuntimeError(
-                        f"AV timed out during reset: {e.details()}"
-                    ) from e
-                raise RuntimeError(
-                    f"Reset failed: {e.code().name} - {e.details()}"
-                ) from e
+            if e.code() == grpc.StatusCode.UNAVAILABLE:
+                raise RuntimeError(f"AV timed out during reset: {e.details()}") from e
+            raise RuntimeError(f"Reset failed: {e.code().name} - {e.details()}") from e
 
     def step(self, obs, time_stamp_ns: int):
         self._ensure_ready()

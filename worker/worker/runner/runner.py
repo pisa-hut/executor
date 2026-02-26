@@ -10,7 +10,6 @@ from worker.runner.av_wrapper import AVWrapper
 from worker.runner.utils.sps import ScenarioPack
 from worker.runner.sim_wrapper import SimWrapper
 
-ROUTE_NOT_FOUND_MAX_RETRY = 10
 AV_RESET_TIMEOUT_MAX_RETRY = 10
 
 
@@ -113,7 +112,6 @@ class Runner:
 
                 logger.info(f"Total parameter combinations: {total}")
 
-                route_not_found_count = 0
                 av_reset_timeout_count = 0
 
                 for i in range(total):
@@ -128,17 +126,7 @@ class Runner:
                     try:
                         self.run_concrete(f"iteration_{i+1}", self.sps, params)
                     except RuntimeError as e:
-                        if "AV route not found during reset" in str(e):
-                            route_not_found_count += 1
-                            logger.warning(
-                                f"RouteNotFoundError count: {route_not_found_count}/{ROUTE_NOT_FOUND_MAX_RETRY}"
-                            )
-                            if route_not_found_count >= ROUTE_NOT_FOUND_MAX_RETRY:
-                                raise RuntimeError(
-                                    f"Exceeded maximum retries for route not found errors: {route_not_found_count} occurrences. Aborting further execution."
-                                ) from e
-                            continue
-                        elif "AV timed out during reset" in str(e):
+                        if "AV timed out during reset" in str(e):
                             av_reset_timeout_count += 1
                             logger.warning(
                                 f"AV reset timeout error count: {av_reset_timeout_count}/{AV_RESET_TIMEOUT_MAX_RETRY}"
@@ -154,7 +142,6 @@ class Runner:
                                 err_msg += f" (previous iterations succeeded, but this one failed)"
                             raise RuntimeError(err_msg) from e
                     else:
-                        route_not_found_count = 0
                         av_reset_timeout_count = 0
             else:
                 logger.info("Running a single concrete scenario.")
