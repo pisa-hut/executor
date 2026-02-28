@@ -41,6 +41,7 @@ def build_services_spec(
             "name": claimed_av.get("name"),
             "image_path": claimed_av.get("image_path"),
             "nv_runtime": claimed_av.get("nv_runtime", False),
+            "extra_ports": {"CARLA_PORT": 2000},
         },
         "map": {
             "osm_path": claimed_map.get("osm_path"),
