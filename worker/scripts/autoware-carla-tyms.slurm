@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=carla-tyms
+#SBATCH --job-name=aw/ca-tyms
 #SBATCH --output=outputs/stdout/job_%j
 #SBATCH --error=outputs/stderr/job_%j
 #SBATCH --time=01:00:00
@@ -32,36 +32,39 @@ if [[ -z $GPU_ID ]]; then
 	exit 1
 fi
 
-case "$GPU_ID" in
-	5|6)
-		echo "skip gpu $GPU_ID"
+function skip_gpu () {
+	if [[ "$1" -eq "$2" ]]; then
+		echo "skip gpu $1"
 		sleep 10000
 		exit 1
-		;;
-	*)
-		echo "run on gpu $GPU_ID"
-		;;
-esac
+	else
+		echo "run on gpu $1"
+	fi
+}
 
-CARLA_ROOT=${HOME}/carla-0.9.16/
-CARLA_PORT=$((GPU_ID*10 + 2000))
+# skip_gpu $GPU_ID 5
+# skip_gpu $GPU_ID 5
 
-${CARLA_ROOT}/CarlaUE4.sh -renderoffscreen -nosound -quality-level=Low -fps=1 -graphicsadapter=$GPU_ID -carla-port=$CARLA_PORT &
-CARLA_PID=$!
-echo "Carla server runing on PID: ${CARLA_PID}"
 
-sleep 20
+# CARLA_ROOT=${HOME}/carla-0.9.16/
+# CARLA_PORT=$((GPU_ID*10 + 2000))
+
+# ${CARLA_ROOT}/CarlaUE4.sh -renderoffscreen -nosound -quality-level=Low -fps=1 -graphicsadapter=$GPU_ID -carla-port=$CARLA_PORT &
+# CARLA_PID=$!
+# echo "Carla server runing on PID: ${CARLA_PID}"
+
+# sleep 20
 echo "Starting runner"
 
 
-CARLA_PORT=$CARLA_PORT uv run -m worker --av carla-agent
+CARLA_PORT=$CARLA_PORT uv run -m worker --av autoware --simulator carla --map tyms
 
 if [ $? -ne 0 ]; then
     echo "Worker execution failed."
     exit 1
 fi
 
-kill -2 ${CARLA_PID}
-kill -9 ${CARLA_PID}
+# kill -2 ${CARLA_PID}
+# kill -9 ${CARLA_PID}
 
 echo "End Time:      $(date)"

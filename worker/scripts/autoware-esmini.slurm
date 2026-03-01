@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=worker-ind
+#SBATCH --job-name=aw/es
 #SBATCH --output=outputs/stdout/job_%j
 #SBATCH --error=outputs/stderr/job_%j
 #SBATCH --time=01:00:00
@@ -22,7 +22,7 @@ echo "CPU Info:"
 echo
 
 echo "Start Time:    $(date)"
-uv run -m worker --map frankenburg
+uv run -m worker --av autoware --simulator esmini
 if [ $? -ne 0 ]; then
     echo "Worker execution failed."
     exit 1
