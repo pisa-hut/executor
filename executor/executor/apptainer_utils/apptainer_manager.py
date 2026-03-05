@@ -85,6 +85,9 @@ class ApptainerServiceManager:
         spec: dict[str, Any],
         key: str,
     ) -> str:
+        if key not in spec:
+            raise KeyError(f"Missing required key '{key}' in component spec")
+
         resolved_path = Path(resolve_host_path(spec.get(key)))
         if not resolved_path.exists():
             raise FileNotFoundError(
@@ -167,8 +170,8 @@ class ApptainerServiceManager:
         services_spec: dict[str, Any],
         output_dir: str,
     ) -> dict[str, dict[str, Any]]:
-        simulator_spec = dict(services_spec.get("simulator", {}))
         av_spec = dict(services_spec.get("av", {}))
+        simulator_spec = dict(services_spec.get("simulator", {}))
         map_spec = dict(services_spec.get("map", {}))
         scenario_spec = dict(services_spec.get("scenario", {}))
 
@@ -197,20 +200,23 @@ class ApptainerServiceManager:
             (output_host, self.OUTPUT_CONTAINER_PATH),
         ]
 
+        av_bind_mounts = list(av_spec.get("bind_mounts", [])) + shared_bind_mounts
+        av_service_config = dict(av_spec)
+        av_service_config["bind_mounts"] = av_bind_mounts
+        av_service_info = self._start_one_service(
+            "av",
+            av_service_config,
+        )
+
         simulator_bind_mounts = (
             list(simulator_spec.get("bind_mounts", [])) + shared_bind_mounts
         )
-        av_bind_mounts = list(av_spec.get("bind_mounts", [])) + shared_bind_mounts
-
         simulator_service_config = dict(simulator_spec)
         simulator_service_config["bind_mounts"] = simulator_bind_mounts
-        av_service_config = dict(av_spec)
-        av_service_config["bind_mounts"] = av_bind_mounts
-
         simulator_service_info = self._start_one_service(
-            "simulator", simulator_service_config
+            "simulator",
+            simulator_service_config,
         )
-        av_service_info = self._start_one_service("av", av_service_config)
 
         if simulator_service_info is None or av_service_info is None:
             logger.error("Failed to start required services. Stopping all services.")
@@ -227,6 +233,12 @@ class ApptainerServiceManager:
         }
 
         started_specs: dict[str, dict[str, Any]] = {
+            "av": {
+                "service_info": {
+                    "url": av_service_info.get("url") if av_service_info else None
+                },
+                **dict(base_started_spec),
+            },
             "simulator": {
                 "service_info": {
                     "url": (
@@ -234,12 +246,6 @@ class ApptainerServiceManager:
                         if simulator_service_info
                         else None
                     )
-                },
-                **dict(base_started_spec),
-            },
-            "av": {
-                "service_info": {
-                    "url": av_service_info.get("url") if av_service_info else None
                 },
                 **dict(base_started_spec),
             },

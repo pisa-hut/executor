@@ -70,13 +70,6 @@ def parse_args(
         description="Executor process that claims and executes tasks from the manager."
     )
     parser.add_argument(
-        "--map",
-        type=str,
-        choices=list(maps.keys()),
-        default=None,
-        help="Name of the map to filter tasks by (optional)",
-    )
-    parser.add_argument(
         "--av",
         type=str,
         choices=list(avs.keys()),
@@ -91,17 +84,24 @@ def parse_args(
         help="Name of the simulator to filter tasks by (optional)",
     )
     parser.add_argument(
-        "--sampler",
+        "--map",
         type=str,
-        choices=list(samplers.keys()),
+        choices=list(maps.keys()),
         default=None,
-        help="Name of the sampler to filter tasks by (optional)",
+        help="Name of the map to filter tasks by (optional)",
     )
     parser.add_argument(
         "--scenario-id",
         type=int,
         default=None,
         help="ID of the scenario to filter tasks by (optional)",
+    )
+    parser.add_argument(
+        "--sampler",
+        type=str,
+        choices=list(samplers.keys()),
+        default=None,
+        help="Name of the sampler to filter tasks by (optional)",
     )
     parser.add_argument(
         "--log-level",
@@ -127,10 +127,10 @@ def main():
 
     claimed_spec = client.claim_task_spec(
         executor_info,
-        map_name=args.map,
-        scenario_id=args.scenario_id,
         av_name=args.av,
         simulator_name=args.simulator,
+        map_name=args.map,
+        scenario_id=args.scenario_id,
         sampler_name=args.sampler,
     )
 
@@ -141,15 +141,15 @@ def main():
     task_id = claimed_spec.get("task", {}).get("id")
     logger.info("Claimed task with ID: %s", task_id)
 
-    claimed_scenario = dict(claimed_spec.get("scenario", {}))
-    claimed_simulator = dict(claimed_spec.get("simulator", {}))
     claimed_av = dict(claimed_spec.get("av", {}))
+    claimed_simulator = dict(claimed_spec.get("simulator", {}))
     claimed_map = dict(claimed_spec.get("map", {}))
-    logger.info("Claimed scenario: %s", claimed_scenario.get("title", "unknown"))
+    claimed_scenario = dict(claimed_spec.get("scenario", {}))
+    # logger.info("Claimed scenario: %s", claimed_scenario.get("title", "unknown"))
 
     services_spec = build_services_spec(
-        claimed_simulator=claimed_simulator,
         claimed_av=claimed_av,
+        claimed_simulator=claimed_simulator,
         claimed_map=claimed_map,
         claimed_scenario=claimed_scenario,
     )

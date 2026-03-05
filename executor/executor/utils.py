@@ -1,9 +1,12 @@
 import copy
+import logging
 import os
 from typing import Any
 
+logger = logging.getLogger(__name__)
 
-def resolve_host_path(host_path: str) -> str:
+
+def resolve_host_path(host_path: str | None) -> str:
     """
     Resolve a host path, expanding user and environment variables, and converting to an absolute path.
 
@@ -12,6 +15,10 @@ def resolve_host_path(host_path: str) -> str:
     Returns:
         str: The resolved absolute host path.
     """
+
+    if host_path is None:
+        logger.warning("Received None as host path to resolve. Returning empty string.")
+        return ""
 
     SBSVF_DIR = os.getenv("SBSVF_DIR", "/opt/sbsvf")
 
@@ -23,8 +30,8 @@ def resolve_host_path(host_path: str) -> str:
 
 
 def build_services_spec(
-    claimed_simulator: dict[str, Any],
     claimed_av: dict[str, Any],
+    claimed_simulator: dict[str, Any],
     claimed_map: dict[str, Any],
     claimed_scenario: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:

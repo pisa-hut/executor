@@ -1,5 +1,5 @@
-from typing import Optional
 import logging
+from typing import Optional
 
 import grpc
 from google.protobuf.struct_pb2 import Struct
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class SimWrapper:
-    def __init__(self, sim_spec: dict, dt_ns: int = None):
+    def __init__(self, sim_spec: dict, dt_ns: int | None = None):
         self._sim_spec = sim_spec
 
         if dt_ns is None:
