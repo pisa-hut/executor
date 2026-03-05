@@ -14,7 +14,7 @@ echo "Starting executor"
 uv run -m executor --av carla-agent --simulator esmini
 
 if [ $? -ne 0 ]; then
-    echo "Worker execution failed."
+    echo "Executor execution failed."
     exit 1
 fi
 

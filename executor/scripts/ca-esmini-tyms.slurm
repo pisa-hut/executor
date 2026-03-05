@@ -6,7 +6,6 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=12G
-#SBATCH --gpus=1
 
 source $(dirname "$0")/utils.sh
 header

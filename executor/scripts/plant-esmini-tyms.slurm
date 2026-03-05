@@ -6,15 +6,15 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=12G
-#SBATCH --gpus=1
 
 source $(dirname "$0")/utils.sh
 header
 
-uv run -m worker --av plant --simulator esmini --map tyms
+echo "Starting executor"
+uv run -m executor --av plant --simulator esmini --map tyms
 
 if [ $? -ne 0 ]; then
-    echo "Worker execution failed."
+    echo "Executor execution failed."
     exit 1
 fi
 
