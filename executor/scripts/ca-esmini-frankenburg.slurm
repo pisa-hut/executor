@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=12G
 
-source $(dirname "$0")/utils.sh
+source "$SLURM_SUBMIT_DIR/scripts/utils.sh"
 header
 
 echo "Starting executor"
