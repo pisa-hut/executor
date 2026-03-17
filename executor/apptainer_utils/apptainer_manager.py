@@ -100,7 +100,7 @@ class ApptainerServiceManager:
 
         return str(resolved_path)
 
-    def _wait_for_service_start(self, port: int, timeout: int = 30) -> bool:
+    def _wait_for_service_start(self, port: int, timeout: int = 120) -> bool:
         start_time = time.time()
         while time.time() - start_time < timeout:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -148,7 +148,9 @@ class ApptainerServiceManager:
                 logger.error("Failed to start Apptainer instance: %s", proc.stderr)
                 return None
 
-            self._wait_for_service_start(allocated_port)
+            if not self._wait_for_service_start(allocated_port):
+                logger.error("Service failed to start: %s", service_name)
+                return None
 
             service_url = f"localhost:{allocated_port}"
             logger.info("%s service available at: %s", component_kind, service_url)
