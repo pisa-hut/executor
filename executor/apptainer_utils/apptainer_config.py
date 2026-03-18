@@ -1,8 +1,6 @@
+from loguru import logger
 from pathlib import Path
 from typing import Any, Optional
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 class ApptainerServiceConfig:

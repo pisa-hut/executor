@@ -1,25 +1,19 @@
 import argparse
+import sys
 import dotenv
-import logging
+from loguru import logger
 import os
 from pprint import pprint
 from typing import Any
 
 from runner.runner import Runner
 
-from .apptainer_utils.apptainer_manager import ApptainerServiceManager
-from .manager_client import ManagerClient
-from .system import collect_executor_identity
-from .utils import build_runner_spec, build_services_spec
+from executor.apptainer_utils.apptainer_manager import ApptainerServiceManager
+from executor.manager_client import ManagerClient
+from executor.system import collect_executor_identity
+from executor.utils import build_runner_spec, build_services_spec
 
 dotenv.load_dotenv()
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler()],
-)
 
 
 def _execute_runner_task(
@@ -27,7 +21,7 @@ def _execute_runner_task(
     task_id: Any,
     runner_spec: dict[str, Any],
 ) -> None:
-    pprint(runner_spec)
+    logger.debug(f"Runner spec for task ID {task_id}: {runner_spec}")
     try:
         runner = Runner(runner_spec)
         runner.exec()
@@ -62,10 +56,10 @@ def _execute_runner_task(
                 return
         else:
             err_msg = f"{type(exc).__name__}: {str(exc)}"
-            logger.error("Task execution failed with error: %s", err_msg)
+            logger.error(f"Task execution failed with error: {err_msg}")
             client.task_failed(task_id, reason=err_msg)
     else:
-        logger.info("Task execution succeeded for task ID: %s", task_id)
+        logger.info(f"Task execution succeeded for task ID: {task_id}")
         client.task_succeeded(task_id)
 
 
@@ -115,9 +109,20 @@ def parse_args(
     parser.add_argument(
         "--log-level",
         type=str,
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        choices=[
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL",
+            "debug",
+            "info",
+            "warning",
+            "error",
+            "critical",
+        ],
         default="INFO",
-        help="Logging level (e.g., DEBUG, INFO, WARNING, ERROR)",
+        help="Logging level for the executor (default: INFO)",
     )
     return parser.parse_args()
 
@@ -127,9 +132,16 @@ def main():
     client.fetch()  # Fetch AVs, simulators, and samplers to cache their IDs
 
     args = parse_args(client.maps, client.avs, client.simulators, client.samplers)
-    logger.setLevel(getattr(logging, args.log_level.upper()))
 
-    logger.info("Starting executor...")
+    logger.remove()  # Remove default logger
+    logger.add(
+        sink=sys.stdout,
+        level=args.log_level.upper(),
+        colorize=True,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    )
+
+    logger.debug("Starting executor...")
     executor_info = collect_executor_identity()
 
     job_id = int(executor_info.get("job_id", "unknown"))
@@ -148,13 +160,13 @@ def main():
         return
 
     task_id = claimed_spec.get("task", {}).get("id")
-    logger.info("Claimed task with ID: %s", task_id)
+    logger.info(f"Claimed task with ID: {task_id}")
 
     claimed_av = dict(claimed_spec.get("av", {}))
     claimed_simulator = dict(claimed_spec.get("simulator", {}))
     claimed_map = dict(claimed_spec.get("map", {}))
     claimed_scenario = dict(claimed_spec.get("scenario", {}))
-    # logger.info("Claimed scenario: %s", claimed_scenario.get("title", "unknown"))
+    logger.info(f"Claimed scenario: {claimed_scenario.get('title', 'unknown')}")
 
     services_spec = build_services_spec(
         claimed_av=claimed_av,
@@ -183,7 +195,7 @@ def main():
             services_spec=services_spec,
             output_dir=output_dir,
         )
-        logger.info("Started services: %s", list(started_specs.keys()))
+        logger.info(f"Started services: {list(started_specs.keys())}")
 
         runner_spec = build_runner_spec(
             claimed_spec=claimed_spec,
@@ -197,13 +209,15 @@ def main():
         )
         _execute_runner_task(client=client, task_id=task_id, runner_spec=runner_spec)
     except Exception as exc:
-        logger.error("Executor failed with error: %s", exc)
+        logger.error(f"Executor failed with error: {exc}")
         if task_id is not None:
             err_msg = f"{type(exc).__name__}: {str(exc)}"
             client.task_failed(task_id, reason=err_msg)
 
     finally:
         service_manager.stop_all_services()
+
+    logger.debug("Executor finished execution.")
 
 
 if __name__ == "__main__":

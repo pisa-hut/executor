@@ -1,4 +1,4 @@
-import logging
+from loguru import logger
 from pathlib import Path
 import random
 import socket
@@ -8,8 +8,6 @@ from typing import Any, Optional
 
 from executor.utils import resolve_host_path
 from executor.apptainer_utils.apptainer_config import ApptainerServiceConfig
-
-logger = logging.getLogger(__name__)
 
 
 def find_free_port(start_port: int = 8000, max_attempts: int = 100) -> Optional[int]:
@@ -95,7 +93,7 @@ class ApptainerServiceManager:
             )
         if not resolved_path.is_dir():
             logger.warning(
-                "Host path for key '%s' is not a directory: %s", key, resolved_path
+                f"Host path for key '{key}' is not a directory: {resolved_path}"
             )
 
         return str(resolved_path)
@@ -106,12 +104,10 @@ class ApptainerServiceManager:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 result = sock.connect_ex(("localhost", port))
                 if result == 0:
-                    logger.info("Service on port %s is up", port)
+                    logger.debug(f"Service on port {port} is up")
                     return True
             time.sleep(1)
-        logger.error(
-            "Service on port %s did not start within %s seconds", port, timeout
-        )
+        logger.error(f"Service on port {port} did not start within {timeout} seconds")
         return False
 
     def _start_one_service(
@@ -122,15 +118,13 @@ class ApptainerServiceManager:
         component_name = str(component_spec.get("name") or component_kind)
         config = ApptainerServiceConfig.from_component_spec(component_spec)
         if config is None:
-            logger.error("Invalid task spec for %s: %s", component_kind, component_name)
+            logger.error(f"Invalid task spec for {component_kind}: {component_name}")
             return None
 
         runtime_envs = self._allocate_runtime_envs(component_spec)
         if runtime_envs is None:
             logger.error(
-                "Failed to find a free port for %s: %s",
-                component_kind,
-                component_name,
+                f"Failed to find a free port for {component_kind}: {component_name}"
             )
             return None
 
@@ -142,18 +136,18 @@ class ApptainerServiceManager:
 
         try:
             command = config.get_start_command(service_name, start_envs)
-            logger.info("Running command: %s", " ".join(command))
+            logger.debug(f"Running command: {' '.join(command)}")
             proc = self._run_command(command)
             if proc.returncode != 0:
-                logger.error("Failed to start Apptainer instance: %s", proc.stderr)
+                logger.error(f"Failed to start Apptainer instance: {proc.stderr}")
                 return None
 
             if not self._wait_for_service_start(allocated_port):
-                logger.error("Service failed to start: %s", service_name)
+                logger.error(f"Service failed to start: {service_name}")
                 return None
 
             service_url = f"localhost:{allocated_port}"
-            logger.info("%s service available at: %s", component_kind, service_url)
+            logger.info(f"{component_kind} service available at: {service_url}")
 
             self.running_instances[service_name] = runtime_envs
             self.component_to_instance[f"{component_kind}:{component_name}"] = (
@@ -165,7 +159,7 @@ class ApptainerServiceManager:
                 "service_name": service_name,
             }
         except Exception as exc:
-            logger.exception("Failed to start Apptainer service: %s", exc)
+            logger.exception(f"Failed to start Apptainer service: {exc}")
 
     def start(
         self,
@@ -257,15 +251,13 @@ class ApptainerServiceManager:
     def stop_all_services(self):
         for service_name in list(self.running_instances.keys()):
             command = ApptainerServiceConfig.get_stop_command(service_name)
-            logger.info("Stopping Apptainer instance: %s", service_name)
+            logger.info(f"Stopping Apptainer instance: {service_name}")
             try:
                 proc = self._run_command(command)
                 if proc.returncode != 0:
-                    logger.error("Failed to stop Apptainer instance: %s", proc.stderr)
+                    logger.error(f"Failed to stop Apptainer instance: {proc.stderr}")
             except Exception as exc:
-                logger.error(
-                    "Failed to stop Apptainer instance %s: %s", service_name, exc
-                )
+                logger.error(f"Failed to stop Apptainer instance {service_name}: {exc}")
 
         self.running_instances.clear()
         self.component_to_instance.clear()

@@ -1,10 +1,7 @@
-import logging
 import os
 import requests
 from typing import Any
-
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class ManagerClient:
@@ -76,7 +73,7 @@ class ManagerClient:
             "scenario_id": scenario_id,
             "sampler_id": sampler_id,
         }
-        logger.info(f"Attempting to claim task with payload: {payload}")
+        logger.debug(f"Attempting to claim task with payload: {payload}")
         r = requests.post(
             f"{self.manager_url}/task/claim",
             json=payload,
@@ -101,7 +98,7 @@ class ManagerClient:
         sampler_name: str | None = None,
     ) -> dict[str, dict[str, Any]] | None:
         executor = self._register_executor(executor_info)
-        logger.info("Registered executor with ID: %s", executor["id"])
+        logger.debug(f"Registered executor with ID: {executor['id']}")
         return self._claim_task_by_id(
             executor_id=int(executor["id"]),
             map_id=self._get_id_by_name("map", map_name),

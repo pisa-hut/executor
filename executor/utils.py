@@ -1,9 +1,7 @@
 import copy
-import logging
+from loguru import logger
 import os
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 def resolve_host_path(host_path: str | None) -> str:
