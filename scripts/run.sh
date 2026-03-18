@@ -11,9 +11,8 @@
 source "$SLURM_SUBMIT_DIR/scripts/utils.sh"
 prologue
 
-
-echo Args: $@
-echo "Starting executor"
+CMD="uv run -m executor $@"
+echo "Executing command: $CMD"
 uv run -m executor $@
 
 if [ $? -ne 0 ]; then
