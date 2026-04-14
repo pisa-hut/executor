@@ -34,7 +34,6 @@ def _execute_runner_task(
     task_id: Any,
     runner_spec: dict[str, Any],
 ) -> None:
-    logger.debug(f"Runner spec for task ID {task_id}: {runner_spec}")
     try:
         runner = Runner(runner_spec)
         runner.exec()
@@ -210,7 +209,6 @@ def main():
             services_spec=services_spec,
             output_dir=output_dir,
         )
-        logger.info(f"Started services: {list(started_specs.keys())}")
 
         runner_spec = build_runner_spec(
             claimed_spec=claimed_spec,

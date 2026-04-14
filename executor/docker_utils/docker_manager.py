@@ -41,7 +41,7 @@ class DockerServiceManager(ServiceManager):
                 return None
 
             service_url = f"localhost:{allocated_port}"
-            logger.info(f"{component_kind} service available at: {service_url}")
+            logger.info(f"{component_name} service available at: {service_url}")
 
             self._register_started_service(
                 component_kind=component_kind,

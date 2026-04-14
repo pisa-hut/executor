@@ -71,6 +71,8 @@ class DockerServiceConfig:
             "syslog-address=udp://localhost:514",
             "--name",
             service_name,
+            "--hostname",
+            service_name,
             "--user",
             f"{os.getuid()}:{os.getgid()}",
         ]

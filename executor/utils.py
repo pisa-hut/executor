@@ -85,7 +85,8 @@ def build_runner_spec(
             "config_path": resolve_host_path(claimed_simulator.get("config_path")),
             "map": simulator_started_spec.get("map", {}),
             "scenario": {
-                "title": claimed_scenario.get("title"),
+                "format": claimed_scenario.get("format"),
+                "name": claimed_scenario.get("title"),
                 "path": simulator_started_spec.get("scenario_path", {}),
             },
             "output_path": simulator_started_spec.get("output_path", {}),
@@ -94,12 +95,6 @@ def build_runner_spec(
         "av": {
             "config_path": resolve_host_path(claimed_av.get("config_path")),
             "map": av_started_spec.get("map", {}),
-            "scenario": {
-                "title": claimed_scenario.get("title"),
-                "path": av_started_spec.get("scenario", {}).get(
-                    "path", av_started_spec.get("scenario_path", {})
-                ),
-            },
             "output_path": av_started_spec.get("output_path", {}),
             "url": av_started_spec.get("service_info", {}).get("url", {}),
         },
