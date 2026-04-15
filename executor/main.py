@@ -3,7 +3,6 @@ import dotenv
 import json
 from loguru import logger
 import os
-from pprint import pprint
 import sys
 from typing import Any
 
@@ -14,7 +13,11 @@ from executor.docker_utils.docker_manager import DockerServiceManager
 from executor.manager_client import ManagerClient
 from executor.service_manager import ServiceManager
 from executor.system import collect_executor_identity
-from executor.utils import build_runner_spec, build_services_spec
+from executor.utils import (
+    build_runner_spec,
+    build_services_spec,
+    sanitize_path,
+)
 
 dotenv.load_dotenv()
 
@@ -175,6 +178,9 @@ def main():
         return
 
     task_id = claimed_spec.get("task", {}).get("id")
+    if task_id is None:
+        logger.error("Claimed spec does not contain a valid task ID. Aborting.")
+        return
     logger.info(f"Claimed task with ID: {task_id}")
 
     claimed_av = dict(claimed_spec.get("av", {}))
@@ -197,7 +203,7 @@ def main():
     cla = f"{av}_{sim}"
 
     output_dir = str(
-        f"./outputs/{cla}/{map_name}-{scenario_title.replace(' ', '_')}-{task_id}"
+        f"./outputs/{cla}/{task_id}-{sanitize_path(map_name)}-{sanitize_path(scenario_title)}"
     )
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "claimed_spec.json"), "w") as f:

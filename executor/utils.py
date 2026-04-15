@@ -1,7 +1,18 @@
 import copy
 from loguru import logger
 import os
+import re
 from typing import Any
+
+
+def sanitize_path(name: str) -> str:
+    """Sanitize a string for safe use as a single directory name component."""
+    name = name.replace(os.sep, "_")
+    if os.altsep:
+        name = name.replace(os.altsep, "_")
+    name = re.sub(r"\.{2,}", "_", name)
+    name = name.replace(" ", "_")
+    return name
 
 
 def resolve_host_path(host_path: str | None) -> str:
