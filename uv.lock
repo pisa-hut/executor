@@ -210,8 +210,8 @@ wheels = [
 
 [[package]]
 name = "runner"
-version = "0.1.5"
-source = { git = "https://github.com/PISA-Hut/runner.git#21ae2a32a6d986a60e37451b2f07828b6ea799b5" }
+version = "0.1.6"
+source = { git = "https://github.com/PISA-Hut/runner.git#04caee4f45d8925b2100388ee7584198aec0bfe8" }
 dependencies = [
     { name = "pisa-api" },
     { name = "pyyaml" },
