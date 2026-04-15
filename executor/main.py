@@ -197,7 +197,7 @@ def main():
     cla = f"{av}_{sim}"
 
     output_dir = str(
-        f"./outputs/{cla}/{map_name}-{scenario_title.replace(' ', '_')}-{task_id}"
+        f"./outputs/{cla}/{task_id}-{map_name}-{scenario_title.replace(' ', '_')}"
     )
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "claimed_spec.json"), "w") as f:
