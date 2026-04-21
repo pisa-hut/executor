@@ -11,31 +11,46 @@ from __future__ import annotations
 
 import io
 import logging
+import threading
 from loguru import logger as loguru_logger
 
 
 class LogCapture:
-    """Rotating in-memory buffer. Holds at most ~2x `max_bytes` before
-    trimming back to the tail of `max_bytes` so we never grow unbounded on
-    a long-running task."""
+    """Rotating in-memory buffer PLUS an unsent-chunk queue for streaming.
+
+    `snapshot()` returns a trimmed tail for the final PUT on task end.
+    `drain_queued()` returns everything that was written since the last
+    drain, so the streamer can forward only new bytes to the manager."""
 
     def __init__(self, max_bytes: int = 512 * 1024):
         self._buf = io.StringIO()
         self._max = max_bytes
+        self._queue: list[str] = []
+        self._lock = threading.Lock()
 
     def write(self, msg: str) -> None:
-        self._buf.write(msg)
-        if self._buf.tell() > self._max * 2:
-            text = self._buf.getvalue()[-self._max :]
-            self._buf = io.StringIO()
-            self._buf.write(text)
+        with self._lock:
+            self._buf.write(msg)
+            self._queue.append(msg)
+            if self._buf.tell() > self._max * 2:
+                text = self._buf.getvalue()[-self._max :]
+                self._buf = io.StringIO()
+                self._buf.write(text)
 
     def snapshot(self) -> str:
-        text = self._buf.getvalue()
+        with self._lock:
+            text = self._buf.getvalue()
         if len(text) <= self._max:
             return text
-        # Keep the tail, prepend a marker so the truncation is obvious.
         return f"... (truncated, keeping last {self._max} bytes)\n{text[-self._max :]}"
+
+    def drain_queued(self) -> str:
+        with self._lock:
+            if not self._queue:
+                return ""
+            text = "".join(self._queue)
+            self._queue.clear()
+            return text
 
 
 class _StdlibToCapture(logging.Handler):

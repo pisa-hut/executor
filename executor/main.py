@@ -13,6 +13,7 @@ from executor.apptainer_utils.apptainer_manager import ApptainerServiceManager
 from executor.docker_utils.docker_manager import DockerServiceManager
 from executor.manager_client import ManagerClient
 from executor.log_capture import LogCapture, install as install_log_capture
+from executor.log_streamer import LogStreamer
 from executor.service_manager import ServiceManager
 from executor.staging import stage_task_inputs
 from executor.system import collect_executor_identity
@@ -197,10 +198,20 @@ def main():
         return
 
     task_id = claimed_spec.get("task", {}).get("id")
+    task_run_id = claimed_spec.get("task_run_id")
     if task_id is None:
         logger.error("Claimed spec does not contain a valid task ID. Aborting.")
         return
-    logger.info(f"Claimed task with ID: {task_id}")
+    logger.info(f"Claimed task with ID: {task_id} (task_run #{task_run_id})")
+
+    log_streamer: LogStreamer | None = None
+    if task_run_id is not None:
+        log_streamer = LogStreamer(
+            capture=capture,
+            manager_url=client.manager_url,
+            task_run_id=int(task_run_id),
+        )
+        log_streamer.start()
 
     claimed_av = dict(claimed_spec.get("av", {}))
     claimed_simulator = dict(claimed_spec.get("simulator", {}))
@@ -277,6 +288,8 @@ def main():
             client.task_failed(task_id, reason=err_msg, log=capture.snapshot())
 
     finally:
+        if log_streamer is not None:
+            log_streamer.stop()
         service_manager.stop_all_services()
 
     logger.debug("Executor finished execution.")
