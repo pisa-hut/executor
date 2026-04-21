@@ -2,7 +2,10 @@ import copy
 from loguru import logger
 import os
 import re
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from executor.staging import StagedPaths
 
@@ -115,7 +118,7 @@ def build_runner_spec(
             "xodr_path": str(staged.xodr_dir),
         },
         "scenario": {
-            "goal_config": claimed_scenario.get("goal_config"),
+            "goal_config": _read_goal_config(staged.scenario_dir),
             "title": claimed_scenario.get("title"),
             "scenario_path": str(staged.scenario_dir),
             "rmlib_path": resolve_host_path(
@@ -145,3 +148,26 @@ def _build_sampler_spec(
     else:
         sampler.pop("config_path", None)
     return sampler
+
+
+def _read_goal_config(scenario_dir: Path) -> dict[str, Any]:
+    """Parse the scenario's spec.yaml and return the ego dict in the shape
+    simcore expects (position + target_speed). Tolerates the legacy
+    spec.yaml variant where the destination lives under `goal` instead of
+    `position`."""
+    spec_path = scenario_dir / "spec.yaml"
+    if not spec_path.is_file():
+        logger.warning(f"{spec_path} missing; running with empty goal_config")
+        return {}
+    try:
+        data = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        logger.warning(f"{spec_path}: YAML parse failed ({exc}); empty goal_config")
+        return {}
+    ego = data.get("ego") if isinstance(data, dict) else None
+    if not isinstance(ego, dict):
+        return {}
+    if "position" not in ego and "goal" in ego:
+        ego = dict(ego)
+        ego["position"] = ego.pop("goal")
+    return ego

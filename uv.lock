@@ -79,6 +79,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "dotenv" },
     { name = "loguru" },
+    { name = "pyyaml" },
     { name = "requests" },
     { name = "simcore" },
 ]
@@ -87,6 +88,7 @@ dependencies = [
 requires-dist = [
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "loguru", specifier = ">=0.7.3" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "simcore", git = "https://github.com/pisa-hut/simulation-core.git" },
 ]
