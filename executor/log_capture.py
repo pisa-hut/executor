@@ -71,10 +71,27 @@ class _StdlibToCapture(logging.Handler):
             pass
 
 
+# Libraries whose DEBUG output is too noisy to capture. urllib3 in
+# particular floods for every HTTP call; since the log streamer itself
+# makes HTTP calls, leaving it at DEBUG creates a compounding mess in
+# the captured log (chunks containing logs of the chunk-upload requests).
+_NOISY_LIBS = (
+    "urllib3",
+    "urllib3.connectionpool",
+    "requests",
+    "charset_normalizer",
+    "asyncio",
+)
+
+
 def install(capture: LogCapture) -> None:
     """Tee loguru + stdlib logging into `capture`. Stdlib root logger is
     left at whatever level the caller configured; we only append a handler.
-    Loguru sink is added at DEBUG so we capture everything."""
+    Loguru sink is added at DEBUG so we capture everything.
+
+    Noisy low-level libs are pinned to WARNING so they don't dominate the
+    captured stream — their DEBUG output isn't useful for task debugging
+    and would consume most of the buffer."""
 
     loguru_logger.add(
         capture.write,
@@ -88,3 +105,6 @@ def install(capture: LogCapture) -> None:
     if root.level > logging.DEBUG or root.level == logging.NOTSET:
         root.setLevel(logging.DEBUG)
     root.addHandler(_StdlibToCapture(capture))
+
+    for name in _NOISY_LIBS:
+        logging.getLogger(name).setLevel(logging.WARNING)
