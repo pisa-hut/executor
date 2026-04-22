@@ -1,6 +1,7 @@
 import argparse
 import dotenv
 import json
+import signal
 from loguru import logger
 import os
 import sys
@@ -24,6 +25,57 @@ from executor.utils import (
 )
 
 dotenv.load_dotenv()
+
+
+def _install_shutdown_handler(state: dict[str, Any]) -> None:
+    """Handle SIGTERM/SIGINT cleanly: report the task as failed, flush the
+    final log chunk, stop the containers, and exit. SLURM delivers
+    SIGTERM ~60 s before the SIGKILL time-limit guillotine (see
+    `--signal=TERM@60` in scripts/run.sh), which is enough headroom for
+    the manager round-trip.
+
+    `state` is a live dict populated by main() as the run progresses; we
+    read whatever's in it at signal time. Missing keys just skip their
+    piece of cleanup."""
+
+    def handler(signum: int, _frame) -> None:
+        logger.warning(
+            f"Received signal {signum}; reporting task failure and exiting"
+        )
+        streamer = state.get("log_streamer")
+        if streamer is not None:
+            try:
+                streamer.stop()
+            except Exception as exc:
+                logger.error(f"log streamer stop failed during signal handling: {exc}")
+        task_id = state.get("task_id")
+        client: ManagerClient | None = state.get("client")
+        capture: LogCapture | None = state.get("capture")
+        if task_id is not None and client is not None:
+            try:
+                reason = (
+                    f"Executor received signal {signum}"
+                    " (likely SLURM time limit or manual cancel)"
+                )
+                client.task_failed(
+                    task_id,
+                    reason=reason,
+                    log=capture.snapshot() if capture is not None else None,
+                )
+            except Exception as exc:
+                logger.error(f"task_failed call during signal handling: {exc}")
+        svc_mgr: ServiceManager | None = state.get("service_manager")
+        if svc_mgr is not None:
+            try:
+                svc_mgr.stop_all_services()
+            except Exception as exc:
+                logger.error(f"service_manager stop during signal handling: {exc}")
+        # 128 + signum is the conventional exit code for "terminated by
+        # signal N" (e.g. 143 for SIGTERM, 130 for SIGINT).
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, handler)
+    signal.signal(signal.SIGINT, handler)
 
 
 def _create_service_manager(backend: str, job_id: int) -> ServiceManager:
@@ -176,6 +228,11 @@ def main():
     capture = LogCapture()
     install_log_capture(capture)
 
+    # Hook SIGTERM/SIGINT early so even a pre-claim kill (unlikely, but
+    # possible) doesn't leave a half-written row behind.
+    shutdown_state: dict[str, Any] = {"client": client, "capture": capture}
+    _install_shutdown_handler(shutdown_state)
+
     logger.debug("Starting executor...")
     logger.info(f"Arguments: {args}")
 
@@ -203,6 +260,7 @@ def main():
         logger.error("Claimed spec does not contain a valid task ID. Aborting.")
         return
     logger.info(f"Claimed task with ID: {task_id} (task_run #{task_run_id})")
+    shutdown_state["task_id"] = task_id
 
     log_streamer: LogStreamer | None = None
     if task_run_id is not None:
@@ -212,6 +270,7 @@ def main():
             task_run_id=int(task_run_id),
         )
         log_streamer.start()
+        shutdown_state["log_streamer"] = log_streamer
 
     claimed_av = dict(claimed_spec.get("av", {}))
     claimed_simulator = dict(claimed_spec.get("simulator", {}))
@@ -252,6 +311,7 @@ def main():
     )
 
     service_manager = _create_service_manager(args.backend, job_id)
+    shutdown_state["service_manager"] = service_manager
     try:
         started_specs = service_manager.start(
             services_spec=services_spec,

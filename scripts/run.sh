@@ -7,6 +7,11 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=12G
+# Deliver SIGTERM 60 s before the time-limit SIGKILL so the executor's
+# signal handler can report the task as failed, flush its log stream, and
+# stop running containers. Without this the task_run row stays `running`
+# forever until a server-side reaper cleans it up.
+#SBATCH --signal=TERM@60
 
 source "$SLURM_SUBMIT_DIR/scripts/utils.sh"
 prologue
