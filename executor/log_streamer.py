@@ -3,12 +3,15 @@ to `POST /task_run/{id}/log/append` on the manager. The manager appends
 to `task_run.log` and broadcasts a `log` SSE envelope so the web UI can
 stream chunks into the Log Drawer in real time.
 
-Failures are swallowed (logged at debug level) — the next tick retries;
-if streaming is permanently broken, the final `snapshot()` still lands
-via the lifecycle call on task completion as a safety net."""
+Transient failures are swallowed (logged at debug level) — the next tick
+retries. A 410 Gone response means the task_run has been finalised on
+the manager (e.g. the user hit Stop in the web UI); we self-SIGTERM so
+the main thread's shutdown handler aborts cleanly."""
 
 from __future__ import annotations
 
+import os
+import signal
 import threading
 
 import requests
@@ -32,6 +35,10 @@ class LogStreamer:
         self._timeout = timeout_s
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # Set once we've raised the abort signal so we don't keep flushing
+        # (and re-tripping the 410 path) during the brief window before the
+        # main thread exits.
+        self._aborted = False
 
     def start(self) -> None:
         if self._thread is not None:
@@ -55,6 +62,8 @@ class LogStreamer:
             self._stop.wait(self._interval)
 
     def _flush_once(self) -> None:
+        if self._aborted:
+            return
         chunk = self._capture.drain_queued()
         if not chunk:
             return
@@ -65,6 +74,18 @@ class LogStreamer:
                 headers={"Content-Type": "application/octet-stream"},
                 timeout=self._timeout,
             )
+            if r.status_code == 410:
+                logger.warning(
+                    "Manager rejected log append (410 Gone) — task was stopped; "
+                    "raising SIGTERM so the executor exits cleanly."
+                )
+                self._aborted = True
+                self._stop.set()
+                # Python signal handlers run on the main thread; sending
+                # ourselves SIGTERM lets the existing shutdown handler do the
+                # `task_aborted` round-trip, stop containers, and sys.exit.
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
             r.raise_for_status()
         except Exception as exc:
             # Keep going — next tick will try again with accumulated output.
