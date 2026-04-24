@@ -156,48 +156,23 @@ def _execute_runner_task(
             concrete_scenarios_executed=_useful(),
         )
     except Exception as exc:
-        useful = _useful()
-        if isinstance(exc, RuntimeError):
-            if (
-                "Failed to set Autoware route points.".lower() in str(exc).lower()
-                or "not reachable from".lower() in str(exc).lower()
-                or "Failed to find a reachable route candidate".lower()
-                in str(exc).lower()
-            ):
-                logger.error(
-                    f"Task execution failed due to route not found error: {exc}"
-                )
-                client.task_invalid(
-                    task_id, reason=str(exc), log=_log(),
-                    concrete_scenarios_executed=useful,
-                )
-                return
-            elif (
-                "Exception calling application: failed validating <Element".lower()
-                in str(exc).lower()
-            ):
-                logger.error(
-                    f"Task execution failed due to scenario validation error: {exc}"
-                )
-                client.task_invalid(
-                    task_id, reason=str(exc), log=_log(),
-                    concrete_scenarios_executed=useful,
-                )
-                return
-            else:
-                logger.error(f"Task execution failed with runtime error: {exc}")
-                client.task_failed(
-                    task_id, reason=str(exc), log=_log(),
-                    concrete_scenarios_executed=useful,
-                )
-                return
-        else:
-            err_msg = f"{type(exc).__name__}: {str(exc)}"
-            logger.error(f"Task execution failed with error: {err_msg}")
-            client.task_failed(
-                task_id, reason=err_msg, log=_log(),
-                concrete_scenarios_executed=useful,
-            )
+        # Any exception is a failure — including route-not-found and
+        # scenario-validation errors that used to be reported as
+        # `task_invalid`. The manager decides whether to permanently
+        # invalidate the task: 10 consecutive runs with
+        # concrete_scenarios_executed == 0. A single run that managed
+        # to finish some concretes still counts as useful progress,
+        # even if a later concrete crashed with "no route found".
+        err_msg = (
+            str(exc) if isinstance(exc, RuntimeError) else f"{type(exc).__name__}: {exc}"
+        )
+        logger.error(f"Task execution failed: {err_msg}")
+        client.task_failed(
+            task_id,
+            reason=err_msg,
+            log=_log(),
+            concrete_scenarios_executed=_useful(),
+        )
     else:
         logger.info(f"Task execution succeeded for task ID: {task_id}")
         client.task_succeeded(
