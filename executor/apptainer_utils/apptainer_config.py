@@ -74,7 +74,7 @@ class ApptainerServiceConfig:
     def get_start_command(
         self, instance_name: str, env_vars: dict[str, Any]
     ) -> list[str]:
-        cmd = ["apptainer", "instance", "start"]
+        cmd = ["apptainer", "instance", "start", "--writable-tmpfs"]
 
         for env_var, value in env_vars.items():
             cmd.extend(["--env", f"{env_var}={value}"])

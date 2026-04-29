@@ -8,8 +8,6 @@ from typing import Any, Optional
 
 from loguru import logger
 
-from executor.utils import resolve_host_path
-
 
 def find_free_port(start_port: int = 8000, max_attempts: int = 100) -> Optional[int]:
     for _ in range(max_attempts):
@@ -87,7 +85,7 @@ class ServiceManager(ABC):
         if key not in spec:
             raise KeyError(f"Missing required key '{key}' in component spec")
 
-        resolved_path = Path(resolve_host_path(spec.get(key)))
+        resolved_path = Path(str(spec[key])).resolve()
         if not resolved_path.exists():
             raise FileNotFoundError(
                 f"Host path for key '{key}' does not exist: {resolved_path}"

@@ -112,39 +112,68 @@ class ManagerClient:
             sampler_id=self._get_id_by_name("sampler", sampler_name),
         )
 
-    def task_failed(self, task_id: int, reason: str, log: str | None = None):
-        logger.info(f"Reporting task failure for task ID {task_id}")
+    def task_failed(
+        self,
+        task_id: int,
+        reason: str,
+        log: str | None = None,
+        concrete_scenarios_executed: int = 0,
+    ):
+        logger.info(
+            f"Reporting task failure for task ID {task_id} "
+            f"(concrete_scenarios_executed={concrete_scenarios_executed})"
+        )
         r = requests.post(
             f"{self.manager_url}/task/failed",
             json={
                 "task_id": task_id,
                 "reason": reason,
                 "log": log,
+                "concrete_scenarios_executed": concrete_scenarios_executed,
             },
             timeout=self.timeout,
         )
         r.raise_for_status()
 
-    def task_invalid(self, task_id: int, reason: str, log: str | None = None):
-        logger.info(f"Reporting task invalid for task ID {task_id}")
+    def task_aborted(
+        self,
+        task_id: int,
+        reason: str,
+        log: str | None = None,
+        concrete_scenarios_executed: int = 0,
+    ):
+        logger.info(
+            f"Reporting task aborted for task ID {task_id} "
+            f"(concrete_scenarios_executed={concrete_scenarios_executed})"
+        )
         r = requests.post(
-            f"{self.manager_url}/task/invalid",
+            f"{self.manager_url}/task/aborted",
             json={
                 "task_id": task_id,
                 "reason": reason,
                 "log": log,
+                "concrete_scenarios_executed": concrete_scenarios_executed,
             },
             timeout=self.timeout,
         )
         r.raise_for_status()
 
-    def task_succeeded(self, task_id: int, log: str | None = None):
-        logger.info(f"Reporting task success for task ID {task_id}")
+    def task_succeeded(
+        self,
+        task_id: int,
+        log: str | None = None,
+        concrete_scenarios_executed: int = 0,
+    ):
+        logger.info(
+            f"Reporting task success for task ID {task_id} "
+            f"(concrete_scenarios_executed={concrete_scenarios_executed})"
+        )
         r = requests.post(
             f"{self.manager_url}/task/succeeded",
             json={
                 "task_id": task_id,
                 "log": log,
+                "concrete_scenarios_executed": concrete_scenarios_executed,
             },
             timeout=self.timeout,
         )
