@@ -8,6 +8,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote as url_quote
 
 import requests
 from loguru import logger
@@ -38,6 +39,26 @@ condition:
       name: scenario-timeout
       timeout_ms: 60000
 """
+
+
+def _safe_dest(base_dir: Path, rel: str) -> Path:
+    """Return ``base_dir / rel``, raising ``ValueError`` on path traversal.
+
+    Rejects absolute ``rel`` values and any path that, after resolution,
+    escapes ``base_dir``.  This prevents a malicious manager response from
+    overwriting files outside the staging root.
+    """
+    if Path(rel).is_absolute():
+        raise ValueError(f"Refusing absolute relative_path from manager: {rel!r}")
+    resolved_base = base_dir.resolve()
+    dest = (base_dir / rel).resolve()
+    try:
+        dest.relative_to(resolved_base)
+    except ValueError:
+        raise ValueError(
+            f"relative_path {rel!r} escapes staging directory {base_dir}"
+        )
+    return dest
 
 
 def _fetch_into(session: requests.Session, url: str, dest: Path, timeout: int) -> None:
@@ -95,9 +116,12 @@ def stage_task_inputs(
     map_listing.raise_for_status()
     for entry in map_listing.json():
         rel = entry["relative_path"]
-        dest = map_dir / rel
+        dest = _safe_dest(map_dir, rel)
         _fetch_into(
-            session, f"{manager_url}/map/{map_id}/file/{rel}", dest, timeout
+            session,
+            f"{manager_url}/map/{map_id}/file/{url_quote(rel, safe='/')}",
+            dest,
+            timeout,
         )
 
     scn_listing = session.get(
@@ -106,10 +130,10 @@ def stage_task_inputs(
     scn_listing.raise_for_status()
     for entry in scn_listing.json():
         rel = entry["relative_path"]
-        dest = scenario_dir / rel
+        dest = _safe_dest(scenario_dir, rel)
         _fetch_into(
             session,
-            f"{manager_url}/scenario/{scenario_id}/file/{rel}",
+            f"{manager_url}/scenario/{scenario_id}/file/{url_quote(rel, safe='/')}",
             dest,
             timeout,
         )
@@ -126,21 +150,22 @@ def stage_task_inputs(
     )
 
     sampler_config: Optional[Path] = None
-    try:
-        sp = config_dir / "sampler.yaml"
-        _fetch_into(
-            session,
-            f"{manager_url}/sampler/{sampler_id}/config",
-            sp,
-            timeout,
-        )
-        sampler_config = sp
-    except requests.HTTPError as exc:
-        status = exc.response.status_code if exc.response is not None else None
-        if status == 404:
-            logger.debug(f"Sampler {sampler_id} has no config; skipping")
-        else:
-            raise
+    if sampler_id:
+        try:
+            sp = config_dir / "sampler.yaml"
+            _fetch_into(
+                session,
+                f"{manager_url}/sampler/{sampler_id}/config",
+                sp,
+                timeout,
+            )
+            sampler_config = sp
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status == 404:
+                logger.debug(f"Sampler {sampler_id} has no config; skipping")
+            else:
+                raise
 
     monitor_config = config_dir / "monitor.yaml"
     monitor_config.write_text(DEFAULT_MONITOR_YAML, encoding="utf-8")
