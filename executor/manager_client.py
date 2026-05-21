@@ -94,11 +94,20 @@ class ManagerClient:
         executor_info: dict[str, str | int],
         task_id: int | None = None,
         av_name: str | None = None,
+        av_id: int | None = None,
         simulator_name: str | None = None,
+        simulator_id: int | None = None,
         map_name: str | None = None,
         scenario_id: int | None = None,
         sampler_name: str | None = None,
     ) -> dict[str, dict[str, Any]] | None:
+        """Claim a task from the manager.
+
+        Filters may be passed by name or by id. When both are given for
+        the same entity, the id wins (more specific; avoids a redundant
+        name → id lookup). The scheduler's bucket-aware loop passes ids
+        from `/queue/demand`; older paths that only know names still work.
+        """
         executor = self._register_executor(executor_info)
         logger.debug(f"Registered executor with ID: {executor['id']}")
         return self._claim_task_by_id(
@@ -106,8 +115,12 @@ class ManagerClient:
             task_id=task_id,
             map_id=self._get_id_by_name("map", map_name),
             scenario_id=scenario_id,
-            av_id=self._get_id_by_name("av", av_name),
-            simulator_id=self._get_id_by_name("simulator", simulator_name),
+            av_id=av_id if av_id is not None else self._get_id_by_name("av", av_name),
+            simulator_id=(
+                simulator_id
+                if simulator_id is not None
+                else self._get_id_by_name("simulator", simulator_name)
+            ),
             sampler_id=self._get_id_by_name("sampler", sampler_name),
         )
 

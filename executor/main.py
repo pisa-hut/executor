@@ -215,11 +215,23 @@ def parse_args(
         help="Name of the AV to filter tasks by (optional)",
     )
     parser.add_argument(
+        "--av-id",
+        type=int,
+        default=None,
+        help="ID of the AV to filter tasks by. Takes precedence over --av.",
+    )
+    parser.add_argument(
         "--simulator",
         type=str,
         choices=list(simulators.keys()),
         default=None,
         help="Name of the simulator to filter tasks by (optional)",
+    )
+    parser.add_argument(
+        "--simulator-id",
+        type=int,
+        default=None,
+        help="ID of the simulator to filter tasks by. Takes precedence over --simulator.",
     )
     parser.add_argument(
         "--map",
@@ -304,7 +316,9 @@ def main():
         executor_info,
         task_id=args.task_id,
         av_name=args.av,
+        av_id=args.av_id,
         simulator_name=args.simulator,
+        simulator_id=args.simulator_id,
         map_name=args.map,
         scenario_id=args.scenario_id,
         sampler_name=args.sampler,
