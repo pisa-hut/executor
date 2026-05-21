@@ -3,6 +3,8 @@ import dotenv
 import json
 import shutil
 import signal
+import socket
+import tempfile
 import time
 from loguru import logger
 import os
@@ -108,6 +110,14 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
                 svc_mgr.stop_all_services()
             except Exception as exc:
                 logger.error(f"service_manager stop during signal handling: {exc}")
+        # Reclaim TMPDIR even on signal exit; orphaned stage dirs
+        # would otherwise pile up under /tmp until the worker reboots.
+        sr = state.get("staged_root")
+        if sr is not None and Path(sr).exists():
+            try:
+                shutil.rmtree(sr)
+            except Exception as exc:
+                logger.error(f"staged_root cleanup during signal handling: {exc}")
         # 128 + signum is the conventional exit code for "terminated by
         # signal N" (e.g. 143 for SIGTERM, 130 for SIGINT).
         sys.exit(128 + signum)
@@ -365,7 +375,26 @@ def main():
     with open(os.path.join(output_dir, "claimed_spec.json"), "w") as f:
         json.dump(claimed_spec, f, indent=4)
 
-    staged_root = Path(output_dir) / ".staged"
+    # Stage map / scenario / config bytes onto worker-LOCAL disk
+    # (TMPDIR, falling back to /tmp). BeeGFS metadata-cache lag was
+    # racing Apptainer's bind-mount pre-stat under parallel load, and
+    # the bind-mount source needs to be visible in microseconds — local
+    # disk simply has no such lag. Outputs (logs, runner_spec.json,
+    # container stdout/stderr) still go to BeeGFS so they survive the
+    # worker.
+    #
+    # The stage dir is unique per task (mkdtemp adds a random suffix),
+    # so two parallel executors on the same node — or a retry of the
+    # same task on the same node — never collide. We drop a breadcrumb
+    # `stage_location.txt` into the BeeGFS output_dir so a post-mortem
+    # can find the (host, path) the data was on.
+    tmpdir = os.environ.get("TMPDIR") or "/tmp"
+    staged_root = Path(
+        tempfile.mkdtemp(prefix=f"pisa-stage-task{task_id}-", dir=tmpdir)
+    )
+    with open(os.path.join(output_dir, "stage_location.txt"), "w") as f:
+        f.write(f"host={socket.gethostname()}\npath={staged_root}\n")
+    shutdown_state["staged_root"] = staged_root
     # Monitor is required by the manager (m20260513 migration); claim
     # responses always include it. KeyError here means the manager
     # is older than this executor — surface as a configuration error.
@@ -441,10 +470,11 @@ def main():
         if log_streamer is not None:
             log_streamer.stop()
         service_manager.stop_all_services()
-        # Reclaim disk: the staged map / scenario / config bytes can be
-        # tens of MB per task and the host accumulates one .staged tree
-        # per (av, sim, task, map, scenario) combo. The manager keeps
-        # the canonical copy, so a re-run just re-stages from scratch.
+        # Reclaim TMPDIR: the staged map / scenario / config bytes can
+        # be tens of MB per task and the worker's /tmp would otherwise
+        # accumulate one stage tree per task across all runs until the
+        # node reboots. The manager keeps the canonical copy on
+        # BeeGFS, so a re-run just re-stages from scratch.
         # Errors here are non-fatal — log + carry on so a stuck
         # filesystem can't prevent the executor from exiting cleanly.
         if staged_root.exists():
