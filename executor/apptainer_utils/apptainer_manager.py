@@ -6,7 +6,7 @@ from typing import Any, Optional
 from loguru import logger
 
 from executor.apptainer_utils.apptainer_config import ApptainerServiceConfig
-from executor.service_manager import ServiceManager
+from executor.service_manager import ServiceManager, WrapperLogBuffer
 
 
 class ApptainerServiceManager(ServiceManager):
@@ -69,7 +69,7 @@ class ApptainerServiceManager(ServiceManager):
             self._processes[service_name] = proc
             reader = threading.Thread(
                 target=self._stream_output,
-                args=(service_name, proc),
+                args=(service_name, proc, self.wrapper_logs),
                 daemon=True,
             )
             reader.start()
@@ -143,7 +143,11 @@ class ApptainerServiceManager(ServiceManager):
             reader.join(timeout=5)
 
     @staticmethod
-    def _stream_output(service_name: str, proc: subprocess.Popen[str]) -> None:
+    def _stream_output(
+        service_name: str,
+        proc: subprocess.Popen[str],
+        wrapper_logs: "WrapperLogBuffer",
+    ) -> None:
         # Write container output straight to stdout with just a
         # `[<service>]` prefix — the container (simcore wrapper)
         # already prints its own timestamp/level, and routing
@@ -153,10 +157,13 @@ class ApptainerServiceManager(ServiceManager):
         # container lines and executor-native lines interleave on
         # the same local stream in chronological order.
         #
-        # Bypassing loguru also means container output does NOT
-        # enter LogCapture and therefore does NOT stream to the
-        # manager / show in the web UI — intentional, the user
-        # explicitly didn't want wrapper noise there.
+        # Bypassing loguru means container output does NOT enter
+        # LogCapture and therefore does NOT stream live to the
+        # manager / Log Drawer. We tee each line into a bounded
+        # `wrapper_logs` buffer so the executor can attach a tail
+        # to the final lifecycle POST — gives the web UI the "what
+        # did the wrapper say when it crashed?" view without the
+        # firehose noise the user explicitly rejected.
         stdout = proc.stdout
         if stdout is None:
             return
@@ -165,5 +172,6 @@ class ApptainerServiceManager(ServiceManager):
             for line in stdout:
                 sys.stdout.write(prefix + line if line.endswith("\n") else prefix + line + "\n")
                 sys.stdout.flush()
+                wrapper_logs.append(service_name, line)
         except Exception as exc:
             logger.warning(f"Output reader for {service_name} stopped: {exc}")

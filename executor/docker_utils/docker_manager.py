@@ -1,13 +1,53 @@
+import subprocess
 from typing import Any, Optional
 
 from loguru import logger
 
 from executor.docker_utils.docker_config import DockerServiceConfig
-from executor.service_manager import ServiceManager
+from executor.service_manager import ServiceManager, strip_ansi
+
+
+# Lines of `docker logs --tail` to keep per service. Same order of
+# magnitude as the apptainer reader's ring (300) so the snapshot looks
+# similar across backends.
+_DOCKER_LOG_TAIL_LINES = 300
 
 
 class DockerServiceManager(ServiceManager):
-    """Start/stop Docker services for simulator and AV."""
+    """Start/stop Docker services for simulator and AV.
+
+    Containers run detached (`docker run -d`), so the executor has no
+    handle on their live stdout/stderr. To attach a wrapper-output tail
+    to the final lifecycle POST we shell out to `docker logs --tail N`
+    at snapshot time; cheap, runs once at task termination.
+    """
+
+    def snapshot_wrapper_outputs(self) -> str:
+        if not self.running_instances:
+            return ""
+        parts: list[str] = []
+        for service_name in self.running_instances.keys():
+            try:
+                out = subprocess.run(
+                    ["docker", "logs", "--tail", str(_DOCKER_LOG_TAIL_LINES), service_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except Exception as exc:
+                logger.warning(f"docker logs for {service_name} failed: {exc}")
+                continue
+            # docker writes container stdout to its stdout and stderr to
+            # its stderr; merge both so the snapshot mirrors what was on
+            # the SLURM log.
+            body = "\n".join(s.strip() for s in (out.stdout, out.stderr) if s.strip())
+            if not body:
+                continue
+            parts.append(
+                f"--- last ~{_DOCKER_LOG_TAIL_LINES} lines of {service_name} ---\n"
+                + strip_ansi(body)
+            )
+        return "\n\n".join(parts)
 
     def _start_backend_service(
         self,

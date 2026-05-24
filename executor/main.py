@@ -84,7 +84,8 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
         )
         if task_id is not None and client is not None:
             try:
-                snap = capture.snapshot() if capture is not None else None
+                svc_mgr_for_log: ServiceManager | None = state.get("service_manager")
+                snap = _build_terminal_log(capture, svc_mgr_for_log)
                 if is_abort:
                     client.task_aborted(
                         task_id,
@@ -136,12 +137,30 @@ def _create_service_manager(backend: str, job_id: int) -> ServiceManager:
     raise ValueError(f"Unsupported backend: {backend}")
 
 
+def _build_terminal_log(
+    capture: "LogCapture | None",
+    service_manager: "ServiceManager | None",
+) -> "str | None":
+    """Compose the log payload attached to a terminal lifecycle POST:
+    the executor's own captured log, optionally followed by a tail of
+    each wrapper container's stdout. Live streaming carries only the
+    executor log; wrapper output is appended once, here, so failures
+    have context without flooding the live Log Drawer."""
+    base = capture.snapshot() if capture is not None else None
+    tail = service_manager.snapshot_wrapper_outputs() if service_manager is not None else ""
+    if not tail:
+        return base
+    sep = "\n\n=== wrapper output (appended at task end) ===\n\n"
+    return (base + sep + tail) if base else (sep.lstrip() + tail)
+
+
 def _execute_runner_task(
     client: ManagerClient,
     task_id: Any,
     runner_spec: dict[str, Any],
     capture: "LogCapture | None" = None,
     shutdown_state: dict[str, Any] | None = None,
+    service_manager: "ServiceManager | None" = None,
 ) -> None:
     """Drive one task's SimulationEngine and report the terminal state.
 
@@ -161,7 +180,7 @@ def _execute_runner_task(
     """
 
     def _log() -> "str | None":
-        return capture.snapshot() if capture is not None else None
+        return _build_terminal_log(capture, service_manager)
 
     engine: SimulationEngine | None = None
 
@@ -450,6 +469,7 @@ def main():
             runner_spec=runner_spec,
             capture=capture,
             shutdown_state=shutdown_state,
+            service_manager=service_manager,
         )
     except Exception as exc:
         logger.error(f"Executor failed with error: {exc}")
@@ -462,7 +482,9 @@ def main():
                 else 0
             )
             client.task_failed(
-                task_id, reason=err_msg, log=capture.snapshot(),
+                task_id,
+                reason=err_msg,
+                log=_build_terminal_log(capture, service_manager),
                 concrete_scenarios_executed=useful,
             )
 
