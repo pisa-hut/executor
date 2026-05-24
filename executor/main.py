@@ -67,12 +67,34 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
             f"Received signal {signum}; reporting task "
             f"{'aborted' if is_abort else 'failed'} and exiting"
         )
+
+        # Order matters: stop containers + clean staged inputs FIRST so
+        # the "Stopping Apptainer container ..." lines reach the manager
+        # live (the log streamer keeps flushing while the task_run is
+        # still `running`). Stop the streamer next so its final flush
+        # carries any tail bytes. Only then send the terminal POST,
+        # which finalises the task_run and triggers 410 on any
+        # subsequent appends. Reversing this order is what made the
+        # cleanup phase invisible in the Log Drawer.
+        svc_mgr: ServiceManager | None = state.get("service_manager")
+        if svc_mgr is not None:
+            try:
+                svc_mgr.stop_all_services()
+            except Exception as exc:
+                logger.error(f"service_manager stop during signal handling: {exc}")
+        sr = state.get("staged_root")
+        if sr is not None and Path(sr).exists():
+            try:
+                shutil.rmtree(sr)
+            except Exception as exc:
+                logger.error(f"staged_root cleanup during signal handling: {exc}")
         streamer = state.get("log_streamer")
         if streamer is not None:
             try:
                 streamer.stop()
             except Exception as exc:
                 logger.error(f"log streamer stop failed during signal handling: {exc}")
+
         task_id = state.get("task_id")
         client: ManagerClient | None = state.get("client")
         capture: LogCapture | None = state.get("capture")
@@ -84,7 +106,7 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
         )
         if task_id is not None and client is not None:
             try:
-                snap = capture.snapshot() if capture is not None else None
+                snap = _build_terminal_log(capture, svc_mgr)
                 if is_abort:
                     client.task_aborted(
                         task_id,
@@ -104,20 +126,6 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
                     )
             except Exception as exc:
                 logger.error(f"lifecycle call during signal handling: {exc}")
-        svc_mgr: ServiceManager | None = state.get("service_manager")
-        if svc_mgr is not None:
-            try:
-                svc_mgr.stop_all_services()
-            except Exception as exc:
-                logger.error(f"service_manager stop during signal handling: {exc}")
-        # Reclaim TMPDIR even on signal exit; orphaned stage dirs
-        # would otherwise pile up under /tmp until the worker reboots.
-        sr = state.get("staged_root")
-        if sr is not None and Path(sr).exists():
-            try:
-                shutil.rmtree(sr)
-            except Exception as exc:
-                logger.error(f"staged_root cleanup during signal handling: {exc}")
         # 128 + signum is the conventional exit code for "terminated by
         # signal N" (e.g. 143 for SIGTERM, 130 for SIGINT).
         sys.exit(128 + signum)
@@ -136,38 +144,42 @@ def _create_service_manager(backend: str, job_id: int) -> ServiceManager:
     raise ValueError(f"Unsupported backend: {backend}")
 
 
+def _build_terminal_log(
+    capture: "LogCapture | None",
+    service_manager: "ServiceManager | None",
+) -> "str | None":
+    """Compose the log payload attached to a terminal lifecycle POST:
+    the executor's own captured log, optionally followed by a tail of
+    each wrapper container's stdout. Live streaming carries only the
+    executor log; wrapper output is appended once, here, so failures
+    have context without flooding the live Log Drawer."""
+    base = capture.snapshot() if capture is not None else None
+    tail = service_manager.snapshot_wrapper_outputs() if service_manager is not None else ""
+    if not tail:
+        return base
+    sep = "\n\n=== wrapper output (appended at task end) ===\n\n"
+    return (base + sep + tail) if base else (sep.lstrip() + tail)
+
+
 def _execute_runner_task(
-    client: ManagerClient,
-    task_id: Any,
     runner_spec: dict[str, Any],
-    capture: "LogCapture | None" = None,
     shutdown_state: dict[str, Any] | None = None,
-) -> None:
-    """Drive one task's SimulationEngine and report the terminal state.
+) -> tuple[str, str]:
+    """Drive one task's SimulationEngine and return the terminal verb +
+    reason. Does NOT send the lifecycle POST — caller does, AFTER
+    cleanup, so the apptainer-stop / staged-cleanup log lines reach the
+    manager live and end up in the final task_run.log too.
 
-    task_run_status is decided by one question only: did engine.exec()
-    return cleanly?
-        exec() returns    -> task_succeeded -> task_run.completed
-        exec() raises     -> task_failed    -> task_run.failed
-        SIGTERM/SIGINT    -> task_aborted   -> task_run.aborted  (handled in
-                                               the signal handler, not here)
+    Verb maps to the manager endpoint:
+        exec() returns    -> ("succeeded", "")
+        exec() raises     -> ("failed", reason)
+        SIGTERM/SIGINT    -> ("aborted", reason) — handled in the
+                              signal handler, not here.
 
-    `concrete_scenarios_executed` is ORTHOGONAL: it reports how much
-    useful work this attempt produced and the manager uses it to decide
-    whether to retry or permanently invalidate the task (after
-    USELESS_STREAK_LIMIT consecutive runs with count 0). A run can
-    legitimately end as `failed` with a non-zero count when, for
-    example, the sampler finished 5 concretes before the 6th crashed.
+    `concrete_scenarios_executed` is orthogonal and stays on the engine;
+    main() reads it off `shutdown_state["engine"]` after this returns.
     """
-
-    def _log() -> "str | None":
-        return capture.snapshot() if capture is not None else None
-
     engine: SimulationEngine | None = None
-
-    def _useful() -> int:
-        return engine.completed_concrete_runs if engine is not None else 0
-
     try:
         engine = SimulationEngine(runner_spec)
         # Expose the engine to the SIGTERM handler so signal-triggered
@@ -177,12 +189,7 @@ def _execute_runner_task(
         engine.exec()
     except KeyboardInterrupt:
         logger.warning("Task execution interrupted by user.")
-        client.task_failed(
-            task_id,
-            reason="Task interrupted by user",
-            log=_log(),
-            concrete_scenarios_executed=_useful(),
-        )
+        return ("failed", "Task interrupted by user")
     except Exception as exc:
         # Any exception is a failure — including route-not-found and
         # scenario-validation errors that used to be reported as
@@ -195,16 +202,41 @@ def _execute_runner_task(
             str(exc) if isinstance(exc, RuntimeError) else f"{type(exc).__name__}: {exc}"
         )
         logger.error(f"Task execution failed: {err_msg}")
-        client.task_failed(
+        return ("failed", err_msg)
+    logger.info("Task execution succeeded.")
+    return ("succeeded", "")
+
+
+def _send_terminal(
+    client: ManagerClient,
+    task_id: Any,
+    verb: str,
+    reason: str,
+    capture: "LogCapture | None",
+    service_manager: "ServiceManager | None",
+    concrete_scenarios_executed: int,
+) -> None:
+    """Send the appropriate lifecycle POST with the full log payload —
+    executor capture plus wrapper-output tail. Called after cleanup so
+    container-stop and staged-cleanup lines are part of the final log."""
+    log = _build_terminal_log(capture, service_manager)
+    if verb == "succeeded":
+        client.task_succeeded(
+            task_id, log=log, concrete_scenarios_executed=concrete_scenarios_executed
+        )
+    elif verb == "aborted":
+        client.task_aborted(
             task_id,
-            reason=err_msg,
-            log=_log(),
-            concrete_scenarios_executed=_useful(),
+            reason=reason,
+            log=log,
+            concrete_scenarios_executed=concrete_scenarios_executed,
         )
     else:
-        logger.info(f"Task execution succeeded for task ID: {task_id}")
-        client.task_succeeded(
-            task_id, log=_log(), concrete_scenarios_executed=_useful()
+        client.task_failed(
+            task_id,
+            reason=reason,
+            log=log,
+            concrete_scenarios_executed=concrete_scenarios_executed,
         )
 
 
@@ -444,32 +476,27 @@ def main():
             f"Runner spec available at: {os.path.join(output_dir, 'runner_spec.json')}"
         )
 
-        _execute_runner_task(
-            client=client,
-            task_id=task_id,
+        terminal_verb, terminal_reason = _execute_runner_task(
             runner_spec=runner_spec,
-            capture=capture,
             shutdown_state=shutdown_state,
         )
     except Exception as exc:
         logger.error(f"Executor failed with error: {exc}")
-        if task_id is not None:
-            err_msg = f"{type(exc).__name__}: {str(exc)}"
-            engine_obj = shutdown_state.get("engine")
-            useful = (
-                int(getattr(engine_obj, "completed_concrete_runs", 0))
-                if engine_obj is not None
-                else 0
-            )
-            client.task_failed(
-                task_id, reason=err_msg, log=capture.snapshot(),
-                concrete_scenarios_executed=useful,
-            )
+        terminal_verb = "failed"
+        terminal_reason = f"{type(exc).__name__}: {str(exc)}"
 
     finally:
-        if log_streamer is not None:
-            log_streamer.stop()
-        service_manager.stop_all_services()
+        # Order matters: do cleanup BEFORE the terminal POST so
+        # "Stopping Apptainer container ..." / staged-inputs cleanup
+        # lines stream live to the manager (the streamer keeps
+        # flushing while task_run is still `running`) and end up in
+        # the final task_run.log too. Stop the streamer between
+        # cleanup and the POST so its final flush carries any tail
+        # bytes; once the POST lands, /log/append returns 410.
+        try:
+            service_manager.stop_all_services()
+        except Exception as exc:
+            logger.error(f"service_manager stop failed: {exc}")
         # Reclaim TMPDIR: the staged map / scenario / config bytes can
         # be tens of MB per task and the worker's /tmp would otherwise
         # accumulate one stage tree per task across all runs until the
@@ -483,6 +510,27 @@ def main():
                 logger.debug(f"Cleaned staged inputs at {staged_root}")
             except Exception as e:
                 logger.warning(f"Failed to clean staged inputs at {staged_root}: {e}")
+        if log_streamer is not None:
+            log_streamer.stop()
+        if task_id is not None:
+            engine_obj = shutdown_state.get("engine")
+            useful = (
+                int(getattr(engine_obj, "completed_concrete_runs", 0))
+                if engine_obj is not None
+                else 0
+            )
+            try:
+                _send_terminal(
+                    client=client,
+                    task_id=task_id,
+                    verb=terminal_verb,
+                    reason=terminal_reason,
+                    capture=capture,
+                    service_manager=service_manager,
+                    concrete_scenarios_executed=useful,
+                )
+            except Exception as exc:
+                logger.error(f"Terminal lifecycle POST failed: {exc}")
 
     logger.debug("Executor finished execution.")
 

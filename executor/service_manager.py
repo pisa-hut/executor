@@ -1,12 +1,67 @@
 from abc import ABC, abstractmethod
+from collections import deque
 from pathlib import Path
 import random
+import re
 import socket
 import subprocess
+import threading
 import time
 from typing import Any, Optional
 
 from loguru import logger
+
+# CSI/OSC escape sequences (ANSI colour, cursor moves, etc.). Stripped
+# before the wrapper snapshot is sent to the manager so raw `\x1b[32m`
+# bytes don't show up verbatim in the Log Drawer's `<pre>`.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
+class WrapperLogBuffer:
+    """Per-service bounded line ring buffer.
+
+    Used by service-manager subclasses to capture the most recent N lines
+    of each wrapper container's combined stdout/stderr, so the executor
+    can attach the tail to the final lifecycle POST when a task ends.
+    Live streaming still goes to local stdout via _stream_output; this
+    buffer is read once on task termination, not polled.
+    """
+
+    DEFAULT_LINES = 300
+
+    def __init__(self, max_lines_per_service: int = DEFAULT_LINES):
+        self._max = max_lines_per_service
+        self._lines: dict[str, deque[str]] = {}
+        self._lock = threading.Lock()
+
+    def append(self, service_name: str, line: str) -> None:
+        with self._lock:
+            buf = self._lines.get(service_name)
+            if buf is None:
+                buf = deque(maxlen=self._max)
+                self._lines[service_name] = buf
+            # Normalise trailing newline so snapshot output joins cleanly.
+            buf.append(line.rstrip("\n"))
+
+    def snapshot(self) -> str:
+        """Return one block per service, separated by a header. Empty if
+        no service produced any output. Strips ANSI on the way out so the
+        manager's Log Drawer renders cleanly."""
+        with self._lock:
+            services = [(name, list(buf)) for name, buf in self._lines.items() if buf]
+        if not services:
+            return ""
+        parts: list[str] = []
+        for name, lines in services:
+            parts.append(
+                f"--- last {len(lines)} lines of {name} ---\n"
+                + strip_ansi("\n".join(lines))
+            )
+        return "\n\n".join(parts)
 
 
 def find_free_port(start_port: int = 8000, max_attempts: int = 100) -> Optional[int]:
@@ -35,6 +90,17 @@ class ServiceManager(ABC):
         self.id = id
         self.running_instances: dict[str, dict[str, Any]] = {}
         self.component_to_instance: dict[str, str] = {}
+        # Per-service bounded buffer of wrapper output. Populated by the
+        # backend's per-line capture path (apptainer reader thread, or
+        # docker `logs --tail` at snapshot time) so the manager only
+        # learns about wrapper noise when the task ends, never live.
+        self.wrapper_logs = WrapperLogBuffer()
+
+    def snapshot_wrapper_outputs(self) -> str:
+        """Tail of each running wrapper's stdout, joined into one block.
+        Backends that don't keep a buffer should override this to fetch
+        their logs at call time (e.g. `docker logs --tail N`)."""
+        return self.wrapper_logs.snapshot()
 
     def _resolve_ros_domain_id(self) -> int:
         try:
