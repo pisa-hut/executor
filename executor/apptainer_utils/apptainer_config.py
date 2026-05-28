@@ -77,7 +77,11 @@ class ApptainerServiceConfig:
         # of the SLURM step. Daemonised `instance start` would escape
         # SLURM's hierarchy: SLURM couldn't account CPU/mem against
         # the job, kill it on time-limit, or reap it on `scancel`.
-        cmd = ["apptainer", "run", "--writable-tmpfs"]
+        # --containall isolates the container from the host's PID/IPC
+        # namespaces and environment so the wrapper doesn't inherit
+        # SLURM/login-shell env vars that can collide with what the
+        # container expects (PYTHONPATH, ROS_*, LD_LIBRARY_PATH, etc.).
+        cmd = ["apptainer", "run", "--containall", "--writable-tmpfs"]
 
         for env_var, value in env_vars.items():
             cmd.extend(["--env", f"{env_var}={value}"])
