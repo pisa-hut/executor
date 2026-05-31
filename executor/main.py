@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from simcore.engine import SimulationEngine
+from simcore.execution import ExecResult, RetryHint
 
 from executor.apptainer_utils.apptainer_manager import ApptainerServiceManager
 from executor.docker_utils.docker_manager import DockerServiceManager
@@ -164,20 +165,24 @@ def _build_terminal_log(
 def _execute_runner_task(
     runner_spec: dict[str, Any],
     shutdown_state: dict[str, Any] | None = None,
-) -> tuple[str, str]:
-    """Drive one task's SimulationEngine and return the terminal verb +
-    reason. Does NOT send the lifecycle POST — caller does, AFTER
-    cleanup, so the apptainer-stop / staged-cleanup log lines reach the
-    manager live and end up in the final task_run.log too.
+) -> tuple[str, str, ExecResult | None]:
+    """Drive one task's SimulationEngine and return the terminal verb,
+    reason, and (when available) the engine's `ExecResult`. Does NOT
+    send the lifecycle POST — caller does, AFTER cleanup, so the
+    apptainer-stop / staged-cleanup log lines reach the manager live and
+    end up in the final task_run.log too.
 
     Verb maps to the manager endpoint:
-        exec() returns    -> ("succeeded", "")
-        exec() raises     -> ("failed", reason)
-        SIGTERM/SIGINT    -> ("aborted", reason) — handled in the
-                              signal handler, not here.
+        result.hint == OK                 -> ("succeeded", "", result)
+        result.hint == RETRY | DONT_RETRY -> ("failed",    result.reason, result)
+        engine construction raised        -> ("failed",    err_msg,       None)
+        SIGTERM/SIGINT                    -> ("aborted",   reason,        None)
+            — handled in the signal handler, not here.
 
-    `concrete_scenarios_executed` is orthogonal and stays on the engine;
-    main() reads it off `shutdown_state["engine"]` after this returns.
+    The `ExecResult.completed_concrete_runs` returned here is what the
+    happy path passes to the terminal POST — no more `getattr` on the
+    engine. The signal handler still reads the engine attribute since
+    exec() hasn't returned at that point.
     """
     engine: SimulationEngine | None = None
     try:
@@ -186,25 +191,35 @@ def _execute_runner_task(
         # aborts report an accurate concrete-run count too.
         if shutdown_state is not None:
             shutdown_state["engine"] = engine
-        engine.exec()
+        result = engine.exec()
     except KeyboardInterrupt:
         logger.warning("Task execution interrupted by user.")
-        return ("failed", "Task interrupted by user")
+        return ("failed", "Task interrupted by user", None)
     except Exception as exc:
-        # Any exception is a failure — including route-not-found and
-        # scenario-validation errors that used to be reported as
-        # `task_invalid`. The manager decides whether to permanently
-        # invalidate the task: 10 consecutive runs with
-        # concrete_scenarios_executed == 0. A single run that managed
-        # to finish some concretes still counts as useful progress,
-        # even if a later concrete crashed with "no route found".
+        # Engine construction itself failed (spec parsing, sps build,
+        # etc.) — exec() never returned an ExecResult to carry the
+        # concrete count, so we surface None and let the caller fall
+        # back to the engine attribute (which may itself be unset).
         err_msg = (
             str(exc) if isinstance(exc, RuntimeError) else f"{type(exc).__name__}: {exc}"
         )
         logger.error(f"Task execution failed: {err_msg}")
-        return ("failed", err_msg)
-    logger.info("Task execution succeeded.")
-    return ("succeeded", "")
+        return ("failed", err_msg, None)
+
+    logger.info(
+        "Task execution returned: hint=%s, completed_concrete_runs=%d, reason=%s",
+        result.hint.value,
+        result.completed_concrete_runs,
+        result.reason,
+    )
+    if result.hint is RetryHint.OK:
+        return ("succeeded", "", result)
+    # Anything else (RETRY, DONT_RETRY) is a failure from the manager's
+    # perspective; the retry/giveup nuance is logged above and will
+    # plumb through to a dedicated manager field once that endpoint
+    # lands. For now the useless-streak rule keyed on
+    # `concrete_scenarios_executed` carries the giveup signal.
+    return ("failed", result.reason, result)
 
 
 def _send_terminal(
@@ -476,7 +491,7 @@ def main():
             f"Runner spec available at: {os.path.join(output_dir, 'runner_spec.json')}"
         )
 
-        terminal_verb, terminal_reason = _execute_runner_task(
+        terminal_verb, terminal_reason, exec_result = _execute_runner_task(
             runner_spec=runner_spec,
             shutdown_state=shutdown_state,
         )
@@ -484,6 +499,7 @@ def main():
         logger.error(f"Executor failed with error: {exc}")
         terminal_verb = "failed"
         terminal_reason = f"{type(exc).__name__}: {str(exc)}"
+        exec_result = None
 
     finally:
         # Order matters: do cleanup BEFORE the terminal POST so
@@ -513,12 +529,19 @@ def main():
         if log_streamer is not None:
             log_streamer.stop()
         if task_id is not None:
-            engine_obj = shutdown_state.get("engine")
-            useful = (
-                int(getattr(engine_obj, "completed_concrete_runs", 0))
-                if engine_obj is not None
-                else 0
-            )
+            if exec_result is not None:
+                useful = int(exec_result.completed_concrete_runs)
+            else:
+                # exec() never returned an ExecResult (engine construction
+                # failed, or Executor's own outer try caught). Fall back
+                # to the engine attribute — set to 0 in __init__ before
+                # any wrapper construction, so this is always at least 0.
+                engine_obj = shutdown_state.get("engine")
+                useful = (
+                    int(getattr(engine_obj, "completed_concrete_runs", 0))
+                    if engine_obj is not None
+                    else 0
+                )
             try:
                 _send_terminal(
                     client=client,
