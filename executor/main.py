@@ -99,12 +99,10 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
         task_id = state.get("task_id")
         client: ManagerClient | None = state.get("client")
         capture: LogCapture | None = state.get("capture")
-        engine_obj = state.get("engine")
-        useful = (
-            int(getattr(engine_obj, "completed_concrete_runs", 0))
-            if engine_obj is not None
-            else 0
-        )
+        # Signal-induced terminations omit the concrete counts: simcore's
+        # exec() never returned an ExecResult, and reading the engine's
+        # in-progress counters here would be racy. The manager inherits
+        # the prior task_run's cumulative snapshot when fields are absent.
         if task_id is not None and client is not None:
             try:
                 snap = _build_terminal_log(capture, svc_mgr)
@@ -113,7 +111,6 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
                         task_id,
                         reason=f"Executor received signal {signum} (cancelled)",
                         log=snap,
-                        concrete_scenarios_executed=useful,
                     )
                 else:
                     client.task_failed(
@@ -123,7 +120,6 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
                             " (SLURM time limit)"
                         ),
                         log=snap,
-                        concrete_scenarios_executed=useful,
                     )
             except Exception as exc:
                 logger.error(f"lifecycle call during signal handling: {exc}")
@@ -179,10 +175,11 @@ def _execute_runner_task(
         SIGTERM/SIGINT                    -> ("aborted",   reason,        None)
             — handled in the signal handler, not here.
 
-    The `ExecResult.completed_concrete_runs` returned here is what the
-    happy path passes to the terminal POST — no more `getattr` on the
-    engine. The signal handler still reads the engine attribute since
-    exec() hasn't returned at that point.
+    The three `ExecResult.{finished,aborted,skipped}_concrete_runs`
+    counts returned here are what the happy path passes to the terminal
+    POST. The SIGTERM signal handler and the engine-construction-failure
+    path omit the counts entirely; the manager inherits the prior
+    task_run's cumulative snapshot in that case.
     """
     engine: SimulationEngine | None = None
     try:
@@ -207,9 +204,11 @@ def _execute_runner_task(
         return ("failed", err_msg, None)
 
     logger.info(
-        "Task execution returned: hint=%s, completed_concrete_runs=%d, reason=%s",
+        "Task execution returned: hint=%s, finished=%d, aborted=%d, skipped=%d, reason=%s",
         result.hint.value,
-        result.completed_concrete_runs,
+        result.finished_concrete_runs,
+        result.aborted_concrete_runs,
+        result.skipped_concrete_runs,
         result.reason,
     )
     if result.hint is RetryHint.OK:
@@ -217,8 +216,8 @@ def _execute_runner_task(
     # Anything else (RETRY, DONT_RETRY) is a failure from the manager's
     # perspective; the retry/giveup nuance is logged above and will
     # plumb through to a dedicated manager field once that endpoint
-    # lands. For now the useless-streak rule keyed on
-    # `concrete_scenarios_executed` carries the giveup signal.
+    # lands. For now the useless-streak rule keyed on the cumulative
+    # concrete counts carries the giveup signal.
     return ("failed", result.reason, result)
 
 
@@ -229,29 +228,43 @@ def _send_terminal(
     reason: str,
     capture: "LogCapture | None",
     service_manager: "ServiceManager | None",
-    concrete_scenarios_executed: int,
+    finished_concrete_runs: int | None = None,
+    aborted_concrete_runs: int | None = None,
+    skipped_concrete_runs: int | None = None,
 ) -> None:
     """Send the appropriate lifecycle POST with the full log payload —
     executor capture plus wrapper-output tail. Called after cleanup so
-    container-stop and staged-cleanup lines are part of the final log."""
+    container-stop and staged-cleanup lines are part of the final log.
+
+    Concrete-count kwargs default to `None`; the SIGTERM / init-failure
+    paths leave them unset so the manager inherits the prior task_run's
+    cumulative snapshot."""
     log = _build_terminal_log(capture, service_manager)
     if verb == "succeeded":
         client.task_succeeded(
-            task_id, log=log, concrete_scenarios_executed=concrete_scenarios_executed
+            task_id,
+            log=log,
+            finished_concrete_runs=finished_concrete_runs,
+            aborted_concrete_runs=aborted_concrete_runs,
+            skipped_concrete_runs=skipped_concrete_runs,
         )
     elif verb == "aborted":
         client.task_aborted(
             task_id,
             reason=reason,
             log=log,
-            concrete_scenarios_executed=concrete_scenarios_executed,
+            finished_concrete_runs=finished_concrete_runs,
+            aborted_concrete_runs=aborted_concrete_runs,
+            skipped_concrete_runs=skipped_concrete_runs,
         )
     else:
         client.task_failed(
             task_id,
             reason=reason,
             log=log,
-            concrete_scenarios_executed=concrete_scenarios_executed,
+            finished_concrete_runs=finished_concrete_runs,
+            aborted_concrete_runs=aborted_concrete_runs,
+            skipped_concrete_runs=skipped_concrete_runs,
         )
 
 
@@ -529,19 +542,19 @@ def main():
         if log_streamer is not None:
             log_streamer.stop()
         if task_id is not None:
+            # Happy path: forward the three cumulative counts from
+            # ExecResult. Engine-construction-failure / outer-except
+            # paths leave them as None so the manager inherits the prior
+            # task_run's snapshot instead of receiving stale or absent
+            # data via the (now-removed) engine attribute fallback.
             if exec_result is not None:
-                useful = int(exec_result.completed_concrete_runs)
+                finished_runs = int(exec_result.finished_concrete_runs)
+                aborted_runs = int(exec_result.aborted_concrete_runs)
+                skipped_runs = int(exec_result.skipped_concrete_runs)
             else:
-                # exec() never returned an ExecResult (engine construction
-                # failed, or Executor's own outer try caught). Fall back
-                # to the engine attribute — set to 0 in __init__ before
-                # any wrapper construction, so this is always at least 0.
-                engine_obj = shutdown_state.get("engine")
-                useful = (
-                    int(getattr(engine_obj, "completed_concrete_runs", 0))
-                    if engine_obj is not None
-                    else 0
-                )
+                finished_runs = None
+                aborted_runs = None
+                skipped_runs = None
             try:
                 _send_terminal(
                     client=client,
@@ -550,7 +563,9 @@ def main():
                     reason=terminal_reason,
                     capture=capture,
                     service_manager=service_manager,
-                    concrete_scenarios_executed=useful,
+                    finished_concrete_runs=finished_runs,
+                    aborted_concrete_runs=aborted_runs,
+                    skipped_concrete_runs=skipped_runs,
                 )
             except Exception as exc:
                 logger.error(f"Terminal lifecycle POST failed: {exc}")
