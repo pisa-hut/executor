@@ -124,25 +124,53 @@ class ManagerClient:
             sampler_id=self._get_id_by_name("sampler", sampler_name),
         )
 
+    def _concrete_run_body(
+        self,
+        finished_concrete_runs: int | None,
+        aborted_concrete_runs: int | None,
+        skipped_concrete_runs: int | None,
+    ) -> dict[str, int]:
+        """Map count kwargs into a JSON body fragment, omitting any
+        field that's `None`. Lets the SIGTERM / init-failure paths send
+        no counts and have the manager inherit the prior task_run's
+        cumulative snapshot."""
+        body: dict[str, int] = {}
+        if finished_concrete_runs is not None:
+            body["finished_concrete_runs"] = finished_concrete_runs
+        if aborted_concrete_runs is not None:
+            body["aborted_concrete_runs"] = aborted_concrete_runs
+        if skipped_concrete_runs is not None:
+            body["skipped_concrete_runs"] = skipped_concrete_runs
+        return body
+
     def task_failed(
         self,
         task_id: int,
         reason: str,
         log: str | None = None,
-        concrete_scenarios_executed: int = 0,
+        finished_concrete_runs: int | None = None,
+        aborted_concrete_runs: int | None = None,
+        skipped_concrete_runs: int | None = None,
     ):
         logger.info(
             f"Reporting task failure for task ID {task_id} "
-            f"(concrete_scenarios_executed={concrete_scenarios_executed})"
+            f"(finished={finished_concrete_runs}, "
+            f"aborted={aborted_concrete_runs}, "
+            f"skipped={skipped_concrete_runs})"
         )
+        body = {
+            "task_id": task_id,
+            "reason": reason,
+            "log": log,
+            **self._concrete_run_body(
+                finished_concrete_runs,
+                aborted_concrete_runs,
+                skipped_concrete_runs,
+            ),
+        }
         r = requests.post(
             f"{self.manager_url}/task/failed",
-            json={
-                "task_id": task_id,
-                "reason": reason,
-                "log": log,
-                "concrete_scenarios_executed": concrete_scenarios_executed,
-            },
+            json=body,
             timeout=self.timeout,
         )
         r.raise_for_status()
@@ -152,20 +180,29 @@ class ManagerClient:
         task_id: int,
         reason: str,
         log: str | None = None,
-        concrete_scenarios_executed: int = 0,
+        finished_concrete_runs: int | None = None,
+        aborted_concrete_runs: int | None = None,
+        skipped_concrete_runs: int | None = None,
     ):
         logger.info(
             f"Reporting task aborted for task ID {task_id} "
-            f"(concrete_scenarios_executed={concrete_scenarios_executed})"
+            f"(finished={finished_concrete_runs}, "
+            f"aborted={aborted_concrete_runs}, "
+            f"skipped={skipped_concrete_runs})"
         )
+        body = {
+            "task_id": task_id,
+            "reason": reason,
+            "log": log,
+            **self._concrete_run_body(
+                finished_concrete_runs,
+                aborted_concrete_runs,
+                skipped_concrete_runs,
+            ),
+        }
         r = requests.post(
             f"{self.manager_url}/task/aborted",
-            json={
-                "task_id": task_id,
-                "reason": reason,
-                "log": log,
-                "concrete_scenarios_executed": concrete_scenarios_executed,
-            },
+            json=body,
             timeout=self.timeout,
         )
         r.raise_for_status()
@@ -174,19 +211,28 @@ class ManagerClient:
         self,
         task_id: int,
         log: str | None = None,
-        concrete_scenarios_executed: int = 0,
+        finished_concrete_runs: int | None = None,
+        aborted_concrete_runs: int | None = None,
+        skipped_concrete_runs: int | None = None,
     ):
         logger.info(
             f"Reporting task success for task ID {task_id} "
-            f"(concrete_scenarios_executed={concrete_scenarios_executed})"
+            f"(finished={finished_concrete_runs}, "
+            f"aborted={aborted_concrete_runs}, "
+            f"skipped={skipped_concrete_runs})"
         )
+        body = {
+            "task_id": task_id,
+            "log": log,
+            **self._concrete_run_body(
+                finished_concrete_runs,
+                aborted_concrete_runs,
+                skipped_concrete_runs,
+            ),
+        }
         r = requests.post(
             f"{self.manager_url}/task/succeeded",
-            json={
-                "task_id": task_id,
-                "log": log,
-                "concrete_scenarios_executed": concrete_scenarios_executed,
-            },
+            json=body,
             timeout=self.timeout,
         )
         r.raise_for_status()
