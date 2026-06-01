@@ -5,6 +5,7 @@ import shutil
 import signal
 import socket
 import tempfile
+import threading
 import time
 from loguru import logger
 import os
@@ -33,17 +34,51 @@ dotenv.load_dotenv()
 
 
 def _install_shutdown_handler(state: dict[str, Any]) -> None:
-    """Handle SIGTERM/SIGINT cleanly: report the task as failed, flush the
-    final log chunk, stop the containers, and exit. SLURM delivers
-    SIGTERM ~60 s before the SIGKILL time-limit guillotine (see
-    `--signal=TERM@60` in scripts/run.sh), which is enough headroom for
-    the manager round-trip.
+    """Drive abort/fail cleanup from a daemon watchdog thread woken via
+    `signal.set_wakeup_fd`, *not* from the Python signal handler.
 
-    `state` is a live dict populated by main() as the run progresses; we
-    read whatever's in it at signal time. Missing keys just skip their
-    piece of cleanup."""
+    Why: simcore's step loop blocks the main thread inside C-level gRPC
+    calls (`stub.Step(..., timeout=100s)`). A Python signal handler can
+    only run between bytecode operations or after a C call returns, so
+    SIGTERM may be queued for tens of seconds. SLURM sends SIGKILL
+    after `KillWait` (30 s by default) — well before the queued handler
+    runs — and the manager is left to reap a still-`running` task_run.
 
-    def handler(signum: int, _frame) -> None:
+    `set_wakeup_fd` is set BY CPython's C-level signal handler the
+    instant the OS delivers the signal; the watchdog thread reads the
+    pipe via `os.read` and can do cleanup + the terminal POST without
+    the main thread ticking. Once done, we `os._exit` to terminate the
+    whole process — main thread killed mid-syscall and all.
+
+    `state` is a live dict populated by main() as the run progresses;
+    we read whatever's in it at signal time. Missing keys just skip
+    their piece of cleanup."""
+
+    # Wakeup pipe. set_wakeup_fd requires non-blocking write so the
+    # kernel never blocks the signal handler if the pipe buffer is
+    # full (we only ever expect one byte at a time anyway).
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)
+
+    def _noop_handler(_signum: int, _frame) -> None:  # noqa: ARG001
+        # Real cleanup runs in the watchdog. This Python-level handler
+        # exists only so signal.signal() considers SIGTERM/SIGINT
+        # "handled" — without that, set_wakeup_fd doesn't fire.
+        pass
+
+    def watchdog() -> None:
+        # Block until the OS-level signal handler writes the signum
+        # byte. Independent of the main thread's bytecode state, so a
+        # main thread wedged in a gRPC C call still gets cleaned up.
+        try:
+            data = os.read(read_fd, 1)
+        except OSError as exc:
+            logger.error(f"shutdown watchdog: read failed: {exc}")
+            return
+        if not data:
+            return
+        signum = data[0]
+
         # Classify the signal: SIGINT is always user-initiated. SIGTERM is
         # ambiguous — SLURM uses it for both `scancel` and time-limit
         # pre-kill. Compare against `SLURM_JOB_END_TIME` (epoch seconds);
@@ -54,8 +89,6 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
             if end_raw:
                 try:
                     remaining = int(end_raw) - int(time.time())
-                    # Our sbatch script requests TERM 60 s before the end;
-                    # anything comfortably more than that is scancel.
                     is_abort = remaining > 90
                 except ValueError:
                     pass
@@ -65,18 +98,17 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
                 is_abort = True
 
         logger.warning(
-            f"Received signal {signum}; reporting task "
+            f"Shutdown watchdog: signal {signum}; reporting task "
             f"{'aborted' if is_abort else 'failed'} and exiting"
         )
 
         # Order matters: stop containers + clean staged inputs FIRST so
         # the "Stopping Apptainer container ..." lines reach the manager
-        # live (the log streamer keeps flushing while the task_run is
-        # still `running`). Stop the streamer next so its final flush
-        # carries any tail bytes. Only then send the terminal POST,
-        # which finalises the task_run and triggers 410 on any
-        # subsequent appends. Reversing this order is what made the
-        # cleanup phase invisible in the Log Drawer.
+        # live. Stop the streamer next so its final flush carries any
+        # tail bytes. Only then send the terminal POST. Stopping the
+        # services here also unblocks the main thread's pending gRPC
+        # step call (the wrapper container dies, gRPC returns UNAVAILABLE)
+        # — useful but not relied upon: we `os._exit` regardless.
         svc_mgr: ServiceManager | None = state.get("service_manager")
         if svc_mgr is not None:
             try:
@@ -101,8 +133,9 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
         capture: LogCapture | None = state.get("capture")
         # Signal-induced terminations omit the concrete counts: simcore's
         # exec() never returned an ExecResult, and reading the engine's
-        # in-progress counters here would be racy. The manager inherits
-        # the prior task_run's cumulative snapshot when fields are absent.
+        # in-progress counters from a background thread would be racy.
+        # The manager inherits the prior task_run's cumulative snapshot
+        # when fields are absent.
         if task_id is not None and client is not None:
             try:
                 snap = _build_terminal_log(capture, svc_mgr)
@@ -123,12 +156,25 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
                     )
             except Exception as exc:
                 logger.error(f"lifecycle call during signal handling: {exc}")
+
+        # Force-terminate the whole process: the main thread is likely
+        # still wedged in a gRPC C call (or mid-cleanup). The manager
+        # has the terminal POST it needs; further work would only
+        # double-POST or block SLURM until KillWait expires.
         # 128 + signum is the conventional exit code for "terminated by
         # signal N" (e.g. 143 for SIGTERM, 130 for SIGINT).
-        sys.exit(128 + signum)
+        os._exit(128 + signum)
 
-    signal.signal(signal.SIGTERM, handler)
-    signal.signal(signal.SIGINT, handler)
+    thread = threading.Thread(
+        target=watchdog,
+        daemon=True,
+        name="pisa-shutdown-watchdog",
+    )
+    thread.start()
+
+    signal.signal(signal.SIGTERM, _noop_handler)
+    signal.signal(signal.SIGINT, _noop_handler)
+    signal.set_wakeup_fd(write_fd)
 
 
 def _create_service_manager(backend: str, job_id: int) -> ServiceManager:
