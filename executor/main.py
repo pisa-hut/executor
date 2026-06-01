@@ -250,12 +250,11 @@ def _execute_runner_task(
         return ("failed", err_msg, None)
 
     logger.info(
-        "Task execution returned: hint=%s, finished=%d, aborted=%d, skipped=%d, reason=%s",
-        result.hint.value,
-        result.finished_concrete_runs,
-        result.aborted_concrete_runs,
-        result.skipped_concrete_runs,
-        result.reason,
+        f"Task execution returned: hint={result.hint.value}, "
+        f"finished={result.finished_concrete_runs}, "
+        f"aborted={result.aborted_concrete_runs}, "
+        f"skipped={result.skipped_concrete_runs}, "
+        f"reason={result.reason}"
     )
     if result.hint is RetryHint.OK:
         return ("succeeded", "", result)
