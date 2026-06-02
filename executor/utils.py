@@ -120,7 +120,7 @@ def build_runner_spec(
             "goal_config": _read_goal_config(staged.scenario_dir),
             "title": claimed_scenario.get("title"),
             "scenario_path": str(staged.scenario_dir),
-            "stop_condition_config_path": str(staged.scenario_dir / "stop_condition.yaml"),
+            **_optional_stop_condition_path(staged.scenario_dir),
             "rmlib_path": resolve_host_path(
                 os.getenv(
                     "RMLIB_PATH",
@@ -144,6 +144,15 @@ def _build_sampler_spec(
     if staged.sampler_config is not None:
         out["config_path"] = str(staged.sampler_config)
     return out
+
+
+def _optional_stop_condition_path(scenario_dir: Path) -> dict[str, str]:
+    # Emit `stop_condition_config_path` only when the scenario actually
+    # ships `stop_condition.yaml`. simcore's Monitor reads the file
+    # unconditionally when the key is set; emitting a path to a
+    # non-existent file would crash the runner with FileNotFoundError.
+    path = scenario_dir / "stop_condition.yaml"
+    return {"stop_condition_config_path": str(path)} if path.is_file() else {}
 
 
 def _read_goal_config(scenario_dir: Path) -> dict[str, Any]:
