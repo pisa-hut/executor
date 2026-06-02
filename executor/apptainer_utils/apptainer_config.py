@@ -1,6 +1,23 @@
+import os
+import re
+import subprocess
+
 from loguru import logger
 from pathlib import Path
 from typing import Any, Optional
+
+# URI schemes apptainer pull accepts. When image_path starts with one of
+# these we treat it as a remote reference, pull (cache-aware) into
+# PISA_SIF_DIR, and use the local path for `apptainer run`.
+_URI_SCHEMES: tuple[str, ...] = (
+    "oras://",
+    "docker://",
+    "library://",
+    "http://",
+    "https://",
+    "shub://",
+    "file://",
+)
 
 
 class ApptainerServiceConfig:
@@ -22,6 +39,31 @@ class ApptainerServiceConfig:
 
     @staticmethod
     def _resolve_sif_path(image_path: str) -> str:
+        # URI-shaped value → pull to a stable per-URI filename. --force
+        # re-runs the manifest fetch, but apptainer's OCI layer cache
+        # short-circuits unchanged layers (no network if the digest
+        # matches), so this stays fast on the common cache-hit path.
+        if image_path.startswith(_URI_SCHEMES):
+            cache_dir = Path(os.environ.get("PISA_SIF_DIR", "/opt/pisa/sif"))
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            local_name = re.sub(r"[^A-Za-z0-9._-]", "_", image_path).strip("_") + ".sif"
+            local_path = cache_dir / local_name
+            logger.info(f"apptainer pull {image_path} -> {local_path}")
+            subprocess.run(
+                [
+                    "apptainer",
+                    "pull",
+                    "--force",
+                    "--dir",
+                    str(cache_dir),
+                    local_name,
+                    image_path,
+                ],
+                check=True,
+            )
+            return str(local_path)
+
+        # Filesystem fallback for entities that haven't migrated to URIs.
         raw = Path(image_path)
         if raw.is_absolute() or raw.exists():
             return str(raw)
@@ -67,7 +109,7 @@ class ApptainerServiceConfig:
                 extra_envs=extra_envs,
                 nv_runtime=nv_runtime,
             )
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logger.error("Invalid component spec types for Apptainer service config")
             return None
 
