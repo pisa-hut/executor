@@ -1,4 +1,3 @@
-import copy
 from loguru import logger
 import os
 import re
@@ -121,6 +120,7 @@ def build_runner_spec(
             "goal_config": _read_goal_config(staged.scenario_dir),
             "title": claimed_scenario.get("title"),
             "scenario_path": str(staged.scenario_dir),
+            "stop_condition_config_path": str(staged.scenario_dir / "stop_condition.yaml"),
             "rmlib_path": resolve_host_path(
                 os.getenv(
                     "RMLIB_PATH",
@@ -130,7 +130,6 @@ def build_runner_spec(
         },
         "sampler": _build_sampler_spec(claimed_spec, staged),
         "monitor": {
-            "module_path": "simcore.monitor.base:Monitor",
             "config_path": str(staged.monitor_config),
         },
     }
@@ -140,12 +139,11 @@ def _build_sampler_spec(
     claimed_spec: dict[str, dict[str, Any]],
     staged: StagedPaths,
 ) -> dict[str, Any]:
-    sampler = copy.deepcopy(claimed_spec.get("sampler", {}))
+    src = claimed_spec.get("sampler", {})
+    out: dict[str, Any] = {"name": src.get("name")}
     if staged.sampler_config is not None:
-        sampler["config_path"] = str(staged.sampler_config)
-    else:
-        sampler.pop("config_path", None)
-    return sampler
+        out["config_path"] = str(staged.sampler_config)
+    return out
 
 
 def _read_goal_config(scenario_dir: Path) -> dict[str, Any]:
