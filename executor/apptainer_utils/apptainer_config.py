@@ -47,7 +47,7 @@ def _remote_manifest_digest(image_path: str) -> Optional[str]:
     """
     for scheme in ("oras://", "docker://", "https://", "http://"):
         if image_path.startswith(scheme):
-            rest = image_path[len(scheme):]
+            rest = image_path[len(scheme) :]
             break
     else:
         return None
