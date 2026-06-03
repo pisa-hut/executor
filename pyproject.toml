@@ -14,3 +14,8 @@ dependencies = [
 
 [tool.uv.sources]
 simcore = { git = "https://github.com/pisa-hut/simulation-core.git" }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.15",
+]
