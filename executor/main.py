@@ -503,8 +503,9 @@ def main():
 
     output_dir = str(
         "./outputs/"
+        f"{_plan_tags_component(plan_tags)}/"
         f"{cla}/"
-        f"{_plan_tags_component(plan_tags)}-"
+        f"{task_id}-"
         f"{_output_component(map_name, 'unknown_map')}-"
         f"{_output_component(scenario_title, 'unknown_scenario')}"
     )
