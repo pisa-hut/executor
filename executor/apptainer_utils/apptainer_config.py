@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -124,21 +125,46 @@ class ApptainerServiceConfig:
                 image_path,
             ]
             started = time.monotonic()
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # merge so order is preserved
-                text=True,
-                bufsize=1,  # line-buffered
+            # Watchdog so the manager keeps seeing heartbeats while a
+            # layer is transferring. Apptainer's progress bar uses
+            # carriage returns (no newlines), so the line-reader loop
+            # below stays blocked through the entire layer fetch.
+            # Without these log lines, no log/append PUT would fire and
+            # the reaper (REAPER_STALE_SECS=300 default) would abort
+            # the task_run mid-pull.
+            heartbeat_stop = threading.Event()
+
+            def _heartbeat() -> None:
+                elapsed_s = 0
+                while not heartbeat_stop.wait(60):
+                    elapsed_s += 60
+                    logger.info(
+                        f"apptainer pull still running, {elapsed_s}s elapsed"
+                    )
+
+            watchdog = threading.Thread(
+                target=_heartbeat, name="apptainer-pull-watchdog", daemon=True
             )
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                stripped = line.rstrip()
-                if stripped:
-                    logger.info(f"apptainer: {stripped}")
-            returncode = proc.wait()
-            if returncode != 0:
-                raise subprocess.CalledProcessError(returncode, cmd)
+            watchdog.start()
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,  # merge so order is preserved
+                    text=True,
+                    bufsize=1,  # line-buffered
+                )
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    stripped = line.rstrip()
+                    if stripped:
+                        logger.info(f"apptainer: {stripped}")
+                returncode = proc.wait()
+                if returncode != 0:
+                    raise subprocess.CalledProcessError(returncode, cmd)
+            finally:
+                heartbeat_stop.set()
+                watchdog.join(timeout=2)
             elapsed = time.monotonic() - started
             logger.info(f"apptainer pull complete in {elapsed:.1f}s -> {local_path}")
 
