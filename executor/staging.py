@@ -41,9 +41,7 @@ def _safe_dest(base_dir: Path, rel: str) -> Path:
     try:
         dest.relative_to(resolved_base)
     except ValueError:
-        raise ValueError(
-            f"relative_path {rel!r} escapes staging directory {base_dir}"
-        )
+        raise ValueError(f"relative_path {rel!r} escapes staging directory {base_dir}")
     return dest
 
 
@@ -97,9 +95,7 @@ def stage_task_inputs(
 
     session = requests.Session()
 
-    map_listing = session.get(
-        f"{manager_url}/map/{map_id}/file", timeout=timeout
-    )
+    map_listing = session.get(f"{manager_url}/map/{map_id}/file", timeout=timeout)
     map_listing.raise_for_status()
     for entry in map_listing.json():
         rel = entry["relative_path"]

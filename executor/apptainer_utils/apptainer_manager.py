@@ -170,7 +170,9 @@ class ApptainerServiceManager(ServiceManager):
         prefix = f"[{service_name}] "
         try:
             for line in stdout:
-                sys.stdout.write(prefix + line if line.endswith("\n") else prefix + line + "\n")
+                sys.stdout.write(
+                    prefix + line if line.endswith("\n") else prefix + line + "\n"
+                )
                 sys.stdout.flush()
                 wrapper_logs.append(service_name, line)
         except Exception as exc:

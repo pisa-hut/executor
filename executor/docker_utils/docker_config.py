@@ -50,7 +50,7 @@ class DockerServiceConfig:
                 extra_envs=extra_envs,
                 nv_runtime=nv_runtime,
             )
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logger.error("Invalid component spec types for Docker service config")
             return None
 
