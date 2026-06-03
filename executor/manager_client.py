@@ -143,6 +143,34 @@ class ManagerClient:
             body["skipped_concrete_runs"] = skipped_concrete_runs
         return body
 
+    def create_concrete_runs(self, task_run_id: int, outcomes: list[Any]) -> None:
+        if not outcomes:
+            return
+        rows = []
+        for outcome in outcomes:
+            rows.append(
+                {
+                    "concrete_key": getattr(outcome, "concrete_key"),
+                    "status": getattr(outcome, "status"),
+                    "test_outcome": getattr(outcome, "test_outcome", "unknown"),
+                    "reason": getattr(outcome, "reason", None),
+                    "stop_condition": getattr(outcome, "stop_condition", None),
+                    "params": getattr(outcome, "params", None),
+                    "final_sim_time_ms": getattr(outcome, "final_sim_time_ms", None),
+                    "wall_time_ms": getattr(outcome, "wall_time_ms", None),
+                    "total_steps": getattr(outcome, "total_steps", None),
+                }
+            )
+        logger.info(
+            f"Reporting {len(rows)} concrete outcome(s) for task_run {task_run_id}"
+        )
+        r = requests.post(
+            f"{self.manager_url}/task_run/{task_run_id}/concrete_runs",
+            json=rows,
+            timeout=self.timeout,
+        )
+        r.raise_for_status()
+
     def task_failed(
         self,
         task_id: int,
