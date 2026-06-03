@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+import time
 
 from loguru import logger
 from pathlib import Path
@@ -53,18 +54,39 @@ class ApptainerServiceConfig:
             local_name = re.sub(r"[^A-Za-z0-9._-]", "_", image_path).strip("_") + ".sif"
             local_path = cache_dir / local_name
             logger.info(f"apptainer pull {image_path} -> {local_path}")
-            subprocess.run(
-                [
-                    "apptainer",
-                    "pull",
-                    "--force",
-                    "--dir",
-                    str(cache_dir),
-                    local_name,
-                    image_path,
-                ],
-                check=True,
+            # Stream the subprocess's stdout/stderr line-by-line through
+            # loguru so the pull's progress lands in the manager Log
+            # Drawer (LogCapture only sees loguru + stdlib logging
+            # records, not raw subprocess output). Multi-GB pulls take
+            # tens of seconds even from zot, so silence makes it look
+            # like the executor is wedged.
+            cmd = [
+                "apptainer",
+                "pull",
+                "--force",
+                "--dir",
+                str(cache_dir),
+                local_name,
+                image_path,
+            ]
+            started = time.monotonic()
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # merge so order is preserved
+                text=True,
+                bufsize=1,  # line-buffered
             )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                stripped = line.rstrip()
+                if stripped:
+                    logger.info(f"apptainer: {stripped}")
+            returncode = proc.wait()
+            if returncode != 0:
+                raise subprocess.CalledProcessError(returncode, cmd)
+            elapsed = time.monotonic() - started
+            logger.info(f"apptainer pull complete in {elapsed:.1f}s -> {local_path}")
             return str(local_path)
 
         # Filesystem fallback for entities that haven't migrated to URIs.
