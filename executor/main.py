@@ -149,8 +149,7 @@ def _install_shutdown_handler(state: dict[str, Any]) -> None:
                     client.task_failed(
                         task_id,
                         reason=(
-                            f"Executor received signal {signum}"
-                            " (SLURM time limit)"
+                            f"Executor received signal {signum} (SLURM time limit)"
                         ),
                         log=snap,
                     )
@@ -197,7 +196,11 @@ def _build_terminal_log(
     executor log; wrapper output is appended once, here, so failures
     have context without flooding the live Log Drawer."""
     base = capture.snapshot() if capture is not None else None
-    tail = service_manager.snapshot_wrapper_outputs() if service_manager is not None else ""
+    tail = (
+        service_manager.snapshot_wrapper_outputs()
+        if service_manager is not None
+        else ""
+    )
     if not tail:
         return base
     sep = "\n\n=== wrapper output (appended at task end) ===\n\n"
@@ -244,7 +247,9 @@ def _execute_runner_task(
         # concrete count, so we surface None and let the caller fall
         # back to the engine attribute (which may itself be unset).
         err_msg = (
-            str(exc) if isinstance(exc, RuntimeError) else f"{type(exc).__name__}: {exc}"
+            str(exc)
+            if isinstance(exc, RuntimeError)
+            else f"{type(exc).__name__}: {exc}"
         )
         logger.error(f"Task execution failed: {err_msg}")
         return ("failed", err_msg, None)
@@ -600,6 +605,14 @@ def main():
                 finished_runs = None
                 aborted_runs = None
                 skipped_runs = None
+            if exec_result is not None and task_run_id is not None:
+                try:
+                    client.create_concrete_runs(
+                        int(task_run_id),
+                        list(getattr(exec_result, "concrete_outcomes", [])),
+                    )
+                except Exception as exc:
+                    logger.error(f"Concrete outcome POST failed: {exc}")
             try:
                 _send_terminal(
                     client=client,
