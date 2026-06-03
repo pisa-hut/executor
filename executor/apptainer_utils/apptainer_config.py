@@ -2,6 +2,8 @@ import os
 import re
 import subprocess
 import time
+import urllib.error
+import urllib.request
 
 from loguru import logger
 from pathlib import Path
@@ -19,6 +21,51 @@ _URI_SCHEMES: tuple[str, ...] = (
     "shub://",
     "file://",
 )
+
+# OCI manifest media types accepted in HEAD probes. Sending these as
+# Accept ensures the registry returns the proper Docker-Content-Digest
+# header (some registries 404 if Accept doesn't match).
+_OCI_MANIFEST_ACCEPT = ",".join(
+    [
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+    ]
+)
+
+
+def _remote_manifest_digest(image_path: str) -> Optional[str]:
+    """Fast HEAD probe for the registry manifest digest.
+
+    Returns the registry's Docker-Content-Digest header (e.g.
+    "sha256:abc..."), or None if the probe fails for any reason — in
+    which case the caller falls back to a full apptainer pull.
+
+    Only oras://, docker://, http(s):// are handled; other schemes
+    return None and the caller does an unconditional pull.
+    """
+    for scheme in ("oras://", "docker://", "https://", "http://"):
+        if image_path.startswith(scheme):
+            rest = image_path[len(scheme) :]
+            break
+    else:
+        return None
+    if ":" not in rest or "/" not in rest:
+        return None
+    repo_part, tag = rest.rsplit(":", 1)
+    host, _, repo = repo_part.partition("/")
+    proto = "http" if image_path.startswith("http://") else "https"
+    url = f"{proto}://{host}/v2/{repo}/manifests/{tag}"
+    req = urllib.request.Request(
+        url, method="HEAD", headers={"Accept": _OCI_MANIFEST_ACCEPT}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.headers.get("Docker-Content-Digest")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        logger.warning(f"manifest HEAD failed for {image_path}: {exc}")
+        return None
 
 
 class ApptainerServiceConfig:
@@ -40,26 +87,33 @@ class ApptainerServiceConfig:
 
     @staticmethod
     def _resolve_sif_path(image_path: str) -> str:
-        # URI-shaped value → `apptainer pull --force` into PISA_SIF_DIR
-        # under a stable per-URI filename. --force re-fetches the manifest
-        # so tag rotations (e.g., CI pushes a new :main) propagate without
-        # operator action. The previous "skip-if-cached" workaround was
-        # added when we pulled directly from Docker Hub and the manifest
-        # HEADs burned the 100/6h anonymous quota; with the zot.hcislab.org
-        # pull-through cache now in front of Docker Hub, the manifest call
-        # is LAN-local and cheap, so we can re-enable refresh-on-pull.
+        # URI-shaped value → pull into PISA_SIF_DIR under a stable
+        # per-URI filename. Fast-path: HEAD the registry manifest and
+        # compare its digest against a sidecar we wrote at last pull.
+        # On match, skip apptainer pull entirely (saves the SIF-file
+        # rewrite from cached blobs, ~0.5-1s per task). On mismatch /
+        # no sidecar / HEAD failure: full pull, streaming output to
+        # loguru so progress lands in the manager Log Drawer.
         if image_path.startswith(_URI_SCHEMES):
             cache_dir = Path(os.environ.get("PISA_SIF_DIR", "/opt/pisa/sif"))
             cache_dir.mkdir(parents=True, exist_ok=True)
             local_name = re.sub(r"[^A-Za-z0-9._-]", "_", image_path).strip("_") + ".sif"
             local_path = cache_dir / local_name
+            digest_file = local_path.with_name(local_path.name + ".digest")
+
+            remote_digest = _remote_manifest_digest(image_path)
+            if (
+                remote_digest
+                and local_path.exists()
+                and digest_file.exists()
+                and digest_file.read_text().strip() == remote_digest
+            ):
+                logger.info(
+                    f"apptainer SIF up-to-date ({remote_digest[:19]}…), skipping pull: {local_path}"
+                )
+                return str(local_path)
+
             logger.info(f"apptainer pull {image_path} -> {local_path}")
-            # Stream the subprocess's stdout/stderr line-by-line through
-            # loguru so the pull's progress lands in the manager Log
-            # Drawer (LogCapture only sees loguru + stdlib logging
-            # records, not raw subprocess output). Multi-GB pulls take
-            # tens of seconds even from zot, so silence makes it look
-            # like the executor is wedged.
             cmd = [
                 "apptainer",
                 "pull",
@@ -87,6 +141,15 @@ class ApptainerServiceConfig:
                 raise subprocess.CalledProcessError(returncode, cmd)
             elapsed = time.monotonic() - started
             logger.info(f"apptainer pull complete in {elapsed:.1f}s -> {local_path}")
+
+            # Record the digest we just pulled so the next task can
+            # short-circuit. We use the HEAD-probed digest; if that
+            # probe failed (remote_digest is None), skip the sidecar
+            # write — next task will pull again, which is correct
+            # (we can't confirm what we have).
+            if remote_digest:
+                digest_file.write_text(remote_digest)
+
             return str(local_path)
 
         # Filesystem fallback for entities that haven't migrated to URIs.
