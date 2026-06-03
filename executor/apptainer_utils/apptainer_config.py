@@ -39,26 +39,25 @@ class ApptainerServiceConfig:
 
     @staticmethod
     def _resolve_sif_path(image_path: str) -> str:
-        # URI-shaped value → pull to a stable per-URI filename. --force
-        # re-runs the manifest fetch, but apptainer's OCI layer cache
-        # short-circuits unchanged layers (no network if the digest
-        # matches), so this stays fast on the common cache-hit path.
+        # URI-shaped value → resolve to a stable per-URI filename under
+        # PISA_SIF_DIR. Cache hits skip the apptainer pull subprocess
+        # entirely: previously we ran `pull --force` on every task so a
+        # fresh `:main` would propagate quickly, but the manifest fetch
+        # alone counts toward Docker Hub's 100/6h anonymous pull limit
+        # and we'd burn through it across compute nodes. Refresh now
+        # happens out-of-band via the controller's `just sync-wrappers`
+        # rsync — operators rotate the cache when they want a new image.
         if image_path.startswith(_URI_SCHEMES):
             cache_dir = Path(os.environ.get("PISA_SIF_DIR", "/opt/pisa/sif"))
             cache_dir.mkdir(parents=True, exist_ok=True)
             local_name = re.sub(r"[^A-Za-z0-9._-]", "_", image_path).strip("_") + ".sif"
             local_path = cache_dir / local_name
+            if local_path.exists():
+                logger.info(f"apptainer SIF cached: {local_path}")
+                return str(local_path)
             logger.info(f"apptainer pull {image_path} -> {local_path}")
             subprocess.run(
-                [
-                    "apptainer",
-                    "pull",
-                    "--force",
-                    "--dir",
-                    str(cache_dir),
-                    local_name,
-                    image_path,
-                ],
+                ["apptainer", "pull", "--dir", str(cache_dir), local_name, image_path],
                 check=True,
             )
             return str(local_path)
