@@ -186,6 +186,21 @@ def _create_service_manager(backend: str, job_id: int) -> ServiceManager:
     raise ValueError(f"Unsupported backend: {backend}")
 
 
+def _output_component(value: Any, fallback: str) -> str:
+    if value is None:
+        return fallback
+    sanitized = sanitize_path(str(value).strip())
+    return sanitized or fallback
+
+
+def _plan_tags_component(tags: Any) -> str:
+    if not isinstance(tags, list):
+        return "untagged"
+    parts = [_output_component(tag, "") for tag in tags]
+    parts = [part for part in parts if part]
+    return "_".join(parts) if parts else "untagged"
+
+
 def _build_terminal_log(
     capture: "LogCapture | None",
     service_manager: "ServiceManager | None",
@@ -475,11 +490,23 @@ def main():
 
     av = claimed_av.get("name", "unknown_av")
     sim = claimed_simulator.get("name", "unknown_simulator")
+    sampler = claimed_spec.get("sampler", {}).get("name", "unknown_sampler")
     map_name = claimed_map.get("name", "unknown_map")
-    cla = f"{av}_{sim}"
+    plan_tags = claimed_spec.get("plan_tags")
+    cla = "_".join(
+        [
+            _output_component(av, "unknown_av"),
+            _output_component(sim, "unknown_simulator"),
+            _output_component(sampler, "unknown_sampler"),
+        ]
+    )
 
     output_dir = str(
-        f"./outputs/{cla}/{task_id}-{sanitize_path(map_name)}-{sanitize_path(scenario_title)}"
+        "./outputs/"
+        f"{cla}/"
+        f"{_plan_tags_component(plan_tags)}-"
+        f"{_output_component(map_name, 'unknown_map')}-"
+        f"{_output_component(scenario_title, 'unknown_scenario')}"
     )
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "claimed_spec.json"), "w") as f:
