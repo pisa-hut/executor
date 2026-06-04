@@ -37,6 +37,15 @@ _OCI_MANIFEST_ACCEPT = ",".join(
 _MANIFEST_HEAD_ATTEMPTS = 3
 _MANIFEST_HEAD_TIMEOUT_SECS = 20
 
+# `…@sha256:<hex>` URIs already embed the manifest digest — no registry
+# round-trip needed. Used as the fast path before the HEAD probe.
+_DIGEST_PINNED_URI = re.compile(r"@(sha256:[0-9a-fA-F]{64})\b")
+
+
+def _digest_from_uri(image_path: str) -> Optional[str]:
+    m = _DIGEST_PINNED_URI.search(image_path)
+    return m.group(1) if m else None
+
 
 def _remote_manifest_digest(image_path: str) -> Optional[str]:
     """Fast HEAD probe for the registry manifest digest.
@@ -114,7 +123,9 @@ class ApptainerServiceConfig:
             local_path = cache_dir / local_name
             digest_file = local_path.with_name(local_path.name + ".digest")
 
-            remote_digest = _remote_manifest_digest(image_path)
+            remote_digest = _digest_from_uri(image_path) or _remote_manifest_digest(
+                image_path
+            )
             if (
                 remote_digest
                 and local_path.exists()
