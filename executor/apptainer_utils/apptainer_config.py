@@ -34,6 +34,8 @@ _OCI_MANIFEST_ACCEPT = ",".join(
         "application/vnd.docker.distribution.manifest.list.v2+json",
     ]
 )
+_MANIFEST_HEAD_ATTEMPTS = 3
+_MANIFEST_HEAD_TIMEOUT_SECS = 20
 
 
 def _remote_manifest_digest(image_path: str) -> Optional[str]:
@@ -61,12 +63,22 @@ def _remote_manifest_digest(image_path: str) -> Optional[str]:
     req = urllib.request.Request(
         url, method="HEAD", headers={"Accept": _OCI_MANIFEST_ACCEPT}
     )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.headers.get("Docker-Content-Digest")
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        logger.warning(f"manifest HEAD failed for {image_path}: {exc}")
-        return None
+    last_exc: BaseException | None = None
+    for attempt in range(1, _MANIFEST_HEAD_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(
+                req, timeout=_MANIFEST_HEAD_TIMEOUT_SECS
+            ) as resp:
+                return resp.headers.get("Docker-Content-Digest")
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_exc = exc
+            if attempt < _MANIFEST_HEAD_ATTEMPTS:
+                time.sleep(attempt)
+                continue
+
+    if last_exc is not None:
+        logger.warning(f"manifest HEAD failed for {image_path}: {last_exc}")
+    return None
 
 
 class ApptainerServiceConfig:
