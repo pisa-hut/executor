@@ -446,8 +446,7 @@ def main():
 
     logger.debug("Starting executor...")
     logger.info(
-        f"Commit SHAs: executor={executor_commit_sha()} "
-        f"simcore={simcore_commit_sha()}"
+        f"Commit SHAs: executor={executor_commit_sha()} simcore={simcore_commit_sha()}"
     )
     logger.info(f"Arguments: {args}")
 
