@@ -138,9 +138,7 @@ class ApptainerServiceConfig:
                 elapsed_s = 0
                 while not heartbeat_stop.wait(60):
                     elapsed_s += 60
-                    logger.info(
-                        f"apptainer pull still running, {elapsed_s}s elapsed"
-                    )
+                    logger.info(f"apptainer pull still running, {elapsed_s}s elapsed")
 
             watchdog = threading.Thread(
                 target=_heartbeat, name="apptainer-pull-watchdog", daemon=True
