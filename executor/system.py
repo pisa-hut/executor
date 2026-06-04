@@ -37,7 +37,7 @@ def executor_commit_sha() -> str:
             text=True,
             timeout=5,
         )
-    except FileNotFoundError, subprocess.TimeoutExpired:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return "unknown"
     if result.returncode != 0:
         return "unknown"
@@ -75,7 +75,7 @@ def simcore_commit_sha() -> str:
                 text=True,
                 timeout=5,
             )
-        except FileNotFoundError, subprocess.TimeoutExpired:
+        except (FileNotFoundError, subprocess.TimeoutExpired):
             return "unknown"
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
