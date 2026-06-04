@@ -23,7 +23,11 @@ from executor.log_capture import LogCapture, install as install_log_capture
 from executor.log_streamer import LogStreamer
 from executor.service_manager import ServiceManager
 from executor.staging import stage_task_inputs
-from executor.system import collect_executor_identity
+from executor.system import (
+    collect_executor_identity,
+    executor_commit_sha,
+    simcore_commit_sha,
+)
 from executor.utils import (
     build_runner_spec,
     build_services_spec,
@@ -441,6 +445,9 @@ def main():
     _install_shutdown_handler(shutdown_state)
 
     logger.debug("Starting executor...")
+    logger.info(
+        f"Commit SHAs: executor={executor_commit_sha()} simcore={simcore_commit_sha()}"
+    )
     logger.info(f"Arguments: {args}")
 
     executor_info = collect_executor_identity()
