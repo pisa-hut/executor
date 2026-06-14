@@ -603,6 +603,15 @@ def main():
                     update.skipped,
                     update.total,
                 )
+                # Persist the just-finalised concrete immediately so its
+                # created_at reflects the real finish time (drives live
+                # throughput). Best-effort: the terminal reconcile re-sends
+                # any that fail, and the manager insert is idempotent.
+                if update.outcome is not None:
+                    try:
+                        client.create_concrete_runs(trid, [update.outcome])
+                    except Exception as exc:
+                        logger.debug(f"incremental concrete_run insert failed: {exc}")
 
         terminal_verb, terminal_reason, exec_result = _execute_runner_task(
             runner_spec=runner_spec,
