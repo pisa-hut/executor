@@ -171,6 +171,33 @@ class ManagerClient:
         )
         r.raise_for_status()
 
+    def report_progress(
+        self,
+        task_run_id: int,
+        finished_concrete_runs: int,
+        aborted_concrete_runs: int,
+        skipped_concrete_runs: int,
+        expected_concrete_runs: int | None,
+    ) -> None:
+        """Best-effort mid-run progress ping so the UI can show ongoing
+        concrete progress. Failures are swallowed — telemetry must never
+        disrupt a running simulation."""
+        body = {
+            "finished_concrete_runs": finished_concrete_runs,
+            "aborted_concrete_runs": aborted_concrete_runs,
+            "skipped_concrete_runs": skipped_concrete_runs,
+            "expected_concrete_runs": expected_concrete_runs,
+        }
+        try:
+            r = requests.put(
+                f"{self.manager_url}/task_run/{task_run_id}/progress",
+                json=body,
+                timeout=self.timeout,
+            )
+            r.raise_for_status()
+        except Exception as exc:
+            logger.debug(f"progress report for task_run {task_run_id} failed: {exc}")
+
     def task_failed(
         self,
         task_id: int,

@@ -10,11 +10,12 @@ import time
 from loguru import logger
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from simcore.engine import SimulationEngine
-from simcore.execution import ExecResult, RetryHint
+from simcore.execution import ExecResult, ProgressUpdate, RetryHint
 
 from executor.apptainer_utils.apptainer_manager import ApptainerServiceManager
 from executor.docker_utils.docker_manager import DockerServiceManager
@@ -229,6 +230,7 @@ def _build_terminal_log(
 def _execute_runner_task(
     runner_spec: dict[str, Any],
     shutdown_state: dict[str, Any] | None = None,
+    progress_callback: Callable[[ProgressUpdate], None] | None = None,
 ) -> tuple[str, str, ExecResult | None]:
     """Drive one task's SimulationEngine and return the terminal verb,
     reason, and (when available) the engine's `ExecResult`. Does NOT
@@ -251,7 +253,7 @@ def _execute_runner_task(
     """
     engine: SimulationEngine | None = None
     try:
-        engine = SimulationEngine(runner_spec)
+        engine = SimulationEngine(runner_spec, progress_callback=progress_callback)
         # Expose the engine to the SIGTERM handler so signal-triggered
         # aborts report an accurate concrete-run count too.
         if shutdown_state is not None:
@@ -589,9 +591,23 @@ def main():
             f"Runner spec available at: {os.path.join(output_dir, 'runner_spec.json')}"
         )
 
+        progress_callback: Callable[[ProgressUpdate], None] | None = None
+        if task_run_id is not None:
+            trid = int(task_run_id)
+
+            def progress_callback(update: ProgressUpdate) -> None:
+                client.report_progress(
+                    trid,
+                    update.finished,
+                    update.aborted,
+                    update.skipped,
+                    update.total,
+                )
+
         terminal_verb, terminal_reason, exec_result = _execute_runner_task(
             runner_spec=runner_spec,
             shutdown_state=shutdown_state,
+            progress_callback=progress_callback,
         )
     except Exception as exc:
         logger.error(f"Executor failed with error: {exc}")
