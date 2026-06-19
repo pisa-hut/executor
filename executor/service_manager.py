@@ -89,7 +89,6 @@ class ServiceManager(ABC):
     def __init__(self, id: str):
         self.id = id
         self.running_instances: dict[str, dict[str, Any]] = {}
-        self.component_to_instance: dict[str, str] = {}
         # Per-service bounded buffer of wrapper output. Populated by the
         # backend's per-line capture path (apptainer reader thread, or
         # docker `logs --tail` at snapshot time) so the manager only
@@ -189,13 +188,10 @@ class ServiceManager(ABC):
 
     def _register_started_service(
         self,
-        component_kind: str,
-        component_name: str,
         service_name: str,
         runtime_envs: dict[str, Any],
     ) -> None:
         self.running_instances[service_name] = runtime_envs
-        self.component_to_instance[f"{component_kind}:{component_name}"] = service_name
 
     def _start_shared_service(
         self,
@@ -308,4 +304,3 @@ class ServiceManager(ABC):
         for service_name in list(self.running_instances.keys()):
             self._stop_backend_service(service_name)
             self.running_instances.pop(service_name, None)
-        self.component_to_instance.clear()

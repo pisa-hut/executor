@@ -96,13 +96,11 @@ class ApptainerServiceConfig:
     def __init__(
         self,
         sif_path: str,
-        startup_wait: float = 2.0,
         bind_mounts: list[tuple[str, str]] = [],
         extra_envs: dict[str, str] = {},
         nv_runtime: bool = False,
     ):
         self.sif_path = sif_path
-        self.startup_wait = startup_wait
         self.bind_mounts = bind_mounts
         self.extra_envs = extra_envs
         self.nv_runtime = nv_runtime
