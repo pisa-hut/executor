@@ -21,11 +21,6 @@ def collect_executor_identity() -> dict[str, str | int]:
     }
 
 
-# Backward-compatible alias for existing imports.
-def collect_worker_identity() -> dict[str, str | int]:
-    return collect_executor_identity()
-
-
 def executor_commit_sha() -> str:
     """Return the SHA of the executor checkout, or "unknown" if not in a
     git working tree. Walks up from this file to find the repo root."""

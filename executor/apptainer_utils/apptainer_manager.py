@@ -93,8 +93,6 @@ class ApptainerServiceManager(ServiceManager):
             logger.info(f"{component_name} service available at: {service_url}")
 
             self._register_started_service(
-                component_kind=component_kind,
-                component_name=component_name,
                 service_name=service_name,
                 runtime_envs=runtime_envs,
             )
