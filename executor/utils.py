@@ -8,6 +8,8 @@ import yaml
 
 from executor.staging import StagedPaths
 
+WEIGHTS_CONTAINER_PATH = "/mnt/weights"
+
 
 def sanitize_path(name: str) -> str:
     """Sanitize a string for safe use as a single directory name component."""
@@ -40,6 +42,24 @@ def resolve_host_path(host_path: str | None) -> str:
     return absolute_path
 
 
+def _weight_bind_mount(claimed_av: dict[str, Any]) -> list[tuple[str, str]]:
+    raw_weight_path = claimed_av.get("weight_path")
+    if raw_weight_path is None:
+        return []
+
+    weight_path = str(raw_weight_path).strip()
+    if not weight_path:
+        return []
+
+    resolved_path = Path(resolve_host_path(weight_path)).resolve()
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"AV weight_path does not exist: {resolved_path}")
+    if not resolved_path.is_dir():
+        raise NotADirectoryError(f"AV weight_path is not a directory: {resolved_path}")
+
+    return [(str(resolved_path), WEIGHTS_CONTAINER_PATH)]
+
+
 def build_services_spec(
     claimed_av: dict[str, Any],
     claimed_simulator: dict[str, Any],
@@ -61,6 +81,7 @@ def build_services_spec(
             "nv_runtime": claimed_av.get("nv_runtime", False),
             "ros_runtime": claimed_av.get("ros_runtime", False),
             "carla_runtime": claimed_av.get("carla_runtime", False),
+            "bind_mounts": _weight_bind_mount(claimed_av),
         },
         "map": {
             "xodr_path": str(staged.xodr_dir),
