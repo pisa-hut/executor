@@ -98,7 +98,7 @@ class EnsureCachedTests(unittest.TestCase):
             popen.assert_not_called()
             self.assertEqual(out_tag, out_pinned)
 
-    def test_pull_sets_apptainer_tmpdir_under_cache(self) -> None:
+    def test_pull_omits_apptainer_tmpdir_when_unset(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
             with (
@@ -110,8 +110,8 @@ class EnsureCachedTests(unittest.TestCase):
                 os.environ.pop("APPTAINER_TMPDIR", None)
                 image_cache.ensure_cached(PINNED_URI, dir=d)
             env = popen.call_args.kwargs["env"]
-            self.assertEqual(env["APPTAINER_TMPDIR"], str(d / "tmp"))
-            self.assertTrue((d / "tmp").is_dir())
+            self.assertNotIn("APPTAINER_TMPDIR", env)
+            self.assertFalse((d / "tmp").exists())
 
     def test_pull_respects_existing_apptainer_tmpdir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
