@@ -175,16 +175,17 @@ def ensure_cached(
         return str(local_path)
 
     # apptainer builds the SIF through a temp dir; the default (/tmp) is often
-    # too small for multi-GB wrapper images. Point APPTAINER_TMPDIR at a roomy
-    # dir under the cache root (respecting any existing override), matching the
-    # scheduler's sbatch env (main.go) so a direct CLI pull behaves the same.
+    # too small for multi-GB wrapper images. Honour APPTAINER_TMPDIR if the
+    # operator set one (matching the scheduler's sbatch env in main.go);
+    # otherwise leave apptainer's own default in place.
     pull_env = dict(os.environ)
-    apptainer_tmpdir = pull_env.get("APPTAINER_TMPDIR") or str(directory / "tmp")
-    Path(apptainer_tmpdir).mkdir(parents=True, exist_ok=True)
-    pull_env["APPTAINER_TMPDIR"] = apptainer_tmpdir
+    apptainer_tmpdir = pull_env.get("APPTAINER_TMPDIR")
+    if apptainer_tmpdir:
+        Path(apptainer_tmpdir).mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        f"apptainer pull {image_path} -> {local_path} (APPTAINER_TMPDIR={apptainer_tmpdir})"
+        f"apptainer pull {image_path} -> {local_path} "
+        f"(APPTAINER_TMPDIR={apptainer_tmpdir or '<apptainer default>'})"
     )
     cmd = [
         "apptainer",
