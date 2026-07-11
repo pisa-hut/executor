@@ -131,6 +131,7 @@ def build_runner_spec(
             "map": av_started_spec.get("map", {}),
             "output_path": av_started_spec.get("output_path", {}),
             "url": av_started_spec.get("service_info", {}).get("url", {}),
+            "observation_identity": "full",
         },
         "map": {
             "name": claimed_map.get("name"),
