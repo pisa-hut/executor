@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import tempfile
@@ -8,7 +9,8 @@ from unittest import mock
 from executor import image_cache
 
 A_DIGEST = "sha256:" + "a" * 64
-B_DIGEST = "sha256:" + "b" * 64
+C_DIGEST = "sha256:" + "c" * 64
+A_SIF = "sha256_" + "a" * 64 + ".sif"
 # Digest-pinned so _digest_from_uri resolves the digest with no network call.
 PINNED_URI = f"oras://reg.example.com/team/carla-wrapper-sif@{A_DIGEST}"
 
@@ -20,13 +22,16 @@ def _fake_popen_success() -> mock.MagicMock:
     return proc
 
 
-class LocalSifNameTests(unittest.TestCase):
-    def test_matches_justfile_sed_rule(self) -> None:
+class SifNameTests(unittest.TestCase):
+    def test_local_sif_name_sanitizes_uri(self) -> None:
         uri = "oras://zot.hcislab.org/tonychi/carla-wrapper-sif:main"
         self.assertEqual(
             image_cache.local_sif_name(uri),
             "oras___zot.hcislab.org_tonychi_carla-wrapper-sif_main.sif",
         )
+
+    def test_digest_sif_name_is_digest_addressed(self) -> None:
+        self.assertEqual(image_cache.digest_sif_name(A_DIGEST), A_SIF)
 
 
 class ResolveSifTests(unittest.TestCase):
@@ -53,30 +58,45 @@ class ResolveSifTests(unittest.TestCase):
 
 
 class EnsureCachedTests(unittest.TestCase):
-    def test_digest_match_skips_pull(self) -> None:
+    def test_digest_addressed_file_present_skips_pull(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
-            name = image_cache.local_sif_name(PINNED_URI)
-            (d / name).write_text("sif")
-            (d / (name + ".digest")).write_text(A_DIGEST)
+            (d / A_SIF).write_text("sif")
             with mock.patch.object(image_cache.subprocess, "Popen") as popen:
                 out = image_cache.ensure_cached(PINNED_URI, dir=d)
             popen.assert_not_called()
-            self.assertEqual(out, str(d / name))
+            self.assertEqual(out, str(d / A_SIF))
 
-    def test_digest_mismatch_pulls_and_writes_sidecar(self) -> None:
+    def test_missing_digest_file_pulls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
-            name = image_cache.local_sif_name(PINNED_URI)
-            (d / (name + ".digest")).write_text(B_DIGEST)  # stale
+            # A different image's .sif is present, but not this digest's.
+            (d / ("sha256_" + "c" * 64 + ".sif")).write_text("other")
             with mock.patch.object(
                 image_cache.subprocess, "Popen", return_value=_fake_popen_success()
             ) as popen:
                 out = image_cache.ensure_cached(PINNED_URI, dir=d)
             popen.assert_called_once()
             self.assertIn("--force", popen.call_args.args[0])
-            self.assertEqual((d / (name + ".digest")).read_text(), A_DIGEST)
-            self.assertEqual(out, str(d / name))
+            self.assertEqual(out, str(d / A_SIF))
+
+    def test_tag_and_pinned_digest_share_one_file(self) -> None:
+        # The scenario that mattered: a moving tag that HEAD-resolves to A_DIGEST
+        # reuses the file a pinned @A_DIGEST URI cached — no re-pull either way.
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / A_SIF).write_text("sif")
+            tag_uri = "docker://zot.example.com/team/carla-wrapper:main"
+            with (
+                mock.patch.object(
+                    image_cache, "_remote_manifest_digest", return_value=A_DIGEST
+                ),
+                mock.patch.object(image_cache.subprocess, "Popen") as popen,
+            ):
+                out_tag = image_cache.ensure_cached(tag_uri, dir=d)
+                out_pinned = image_cache.ensure_cached(PINNED_URI, dir=d)
+            popen.assert_not_called()
+            self.assertEqual(out_tag, out_pinned)
 
     def test_pull_sets_apptainer_tmpdir_under_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,12 +128,10 @@ class EnsureCachedTests(unittest.TestCase):
                 popen.call_args.kwargs["env"]["APPTAINER_TMPDIR"], override
             )
 
-    def test_force_pulls_even_on_digest_match(self) -> None:
+    def test_force_pulls_even_when_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
-            name = image_cache.local_sif_name(PINNED_URI)
-            (d / name).write_text("sif")
-            (d / (name + ".digest")).write_text(A_DIGEST)
+            (d / A_SIF).write_text("sif")
             with mock.patch.object(
                 image_cache.subprocess, "Popen", return_value=_fake_popen_success()
             ) as popen:
@@ -152,6 +170,21 @@ class MainTests(unittest.TestCase):
                 image_cache.main()
         self.assertEqual(cm.exception.code, 2)
         ec.assert_not_called()
+
+    def test_print_names_resolves_without_pulling(self) -> None:
+        with (
+            mock.patch.object(
+                sys, "argv", ["executor.image_cache", "--print-names", PINNED_URI]
+            ),
+            mock.patch("dotenv.load_dotenv"),
+            mock.patch.object(image_cache, "ensure_cached") as ec,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as out,
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                image_cache.main()
+        self.assertEqual(cm.exception.code, 0)
+        ec.assert_not_called()
+        self.assertEqual(out.getvalue().strip(), A_SIF)
 
 
 class DelegationTests(unittest.TestCase):

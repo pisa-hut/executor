@@ -1,10 +1,11 @@
 # Wrapper image cache recipes.
 #
 # The executor pulls wrapper images into $PISA_DATA_DIR/sif at task-claim time
-# via executor.image_cache. Each <name>.sif has a <name>.sif.digest sidecar
-# recording the registry manifest digest at last pull; the executor HEAD-probes
-# the registry and only re-pulls when the digest differs. `update-cache` runs
-# that same pull path ahead of time so a later claim skips the pull.
+# via executor.image_cache. The cache is digest-addressed: each .sif is named
+# after the image's manifest digest (resolved from an @sha256 URI or a registry
+# HEAD probe), so the executor re-pulls only when a tag's digest moves, and a tag
+# and its pinned digest share one file. `update-cache` runs that same pull path
+# ahead of time so a later claim skips the pull.
 
 # Load executor/.env so PISA_DATA_DIR resolves the same way the executor sees it.
 set dotenv-load
@@ -43,33 +44,11 @@ update-cache-force *args:
     fi
     uv run -m executor.image_cache --force $uris
 
-# Invalidate cached digests so the executor re-verifies/re-pulls (digest-checked)
-# on the next task run. Keeps the current .sif as a fallback until then.
-update-wrappers:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    shopt -s nullglob
-    dir="{{sif_dir}}"
-    if [[ ! -d "$dir" ]]; then
-        echo "SIF dir not found: $dir" >&2
-        exit 1
-    fi
-    n=0
-    for sif in "$dir"/*.sif; do
-        rm -f -- "$sif.digest"
-        echo "  staled $(basename "$sif")"
-        n=$((n + 1))
-    done
-    if [[ "$n" -eq 0 ]]; then
-        echo "No wrapper SIFs found in $dir"
-    else
-        echo "Invalidated $n wrapper SIF(s) in $dir; next task run pulls latest."
-    fi
-
-# Prune stale/duplicate cached images, keeping only the current set (the
-# sanitized filenames of `wrapper_images` — the latest tagged builds). Removes
-# every other .sif (+ its .digest sidecar), e.g. old per-digest files from a
-# previous naming. With the 6 current images pulled, 6 remain.
+# Prune stale/duplicate cached images, keeping only the .sif files the current
+# `wrapper_images` resolve to (their digest-addressed names). Removes every
+# other .sif — e.g. the previous digest of a tag that has since moved. Keep-set
+# names come from image_cache itself (--print-names) so they always match what a
+# claim resolves. With the 6 current images pulled, 6 remain.
 purge-wrappers:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -79,13 +58,14 @@ purge-wrappers:
         echo "SIF dir not found: $dir" >&2
         exit 1
     fi
-    # Keep-set: the sanitized .sif filename for each current image (must match
-    # executor.image_cache.local_sif_name).
     declare -A keep=()
-    for uri in {{wrapper_images}}; do
-        name="$(printf '%s' "$uri" | sed -E 's/[^A-Za-z0-9._-]/_/g; s/^_+//; s/_+$//').sif"
-        keep["$name"]=1
-    done
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && keep["$name"]=1
+    done < <(uv run -m executor.image_cache --print-names {{wrapper_images}})
+    if [[ "${#keep[@]}" -eq 0 ]]; then
+        echo "Could not resolve any current image names; aborting to avoid deleting the cache." >&2
+        exit 1
+    fi
     kept=0
     removed=0
     for sif in "$dir"/*.sif; do
@@ -94,14 +74,13 @@ purge-wrappers:
             kept=$((kept + 1))
             continue
         fi
-        rm -f -- "$sif" "$sif.digest"
+        rm -f -- "$sif"
         echo "  removed $name"
         removed=$((removed + 1))
     done
     echo "Purge complete: kept $kept current image(s), removed $removed stale image(s) in $dir"
 
-# Deprecated: superseded by `update-cache` (which writes the digest sidecar so
-# claims actually skip the pull). Forwards for now.
+# Deprecated: superseded by `update-cache`. Forwards for now.
 pull-wrappers *uris:
     #!/usr/bin/env bash
     set -euo pipefail

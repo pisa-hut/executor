@@ -9,10 +9,11 @@ through this module:
   (`uv run -m executor.image_cache <uri>...`, wired to `just update-cache`) to
   pre-pull / refresh those images so the later claim skips the pull.
 
-Both paths write into the same cache dir (`$PISA_DATA_DIR/sif`), under the same
-sanitized per-URI filename, with the same `<name>.sif.digest` sidecar — so a
-prefetch and a claim agree on what "already cached" means. The dependency points
-one way (executor -> image_cache); this module imports nothing from the executor.
+Both paths write into the same digest-addressed cache dir (`$PISA_DATA_DIR/sif`):
+each `.sif` is named after its image's manifest digest, so a prefetch and a claim
+— and a tag vs. the `@sha256:…` it resolves to — all land on the same file. The
+dependency points one way (executor -> image_cache); this module imports nothing
+from the executor.
 """
 
 import argparse
@@ -72,11 +73,21 @@ def cache_dir() -> Path:
     return Path(os.environ.get("PISA_DATA_DIR", "/PISA_DATA_DIR")) / "sif"
 
 
+def _sanitize(s: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", s).strip("_")
+
+
 def local_sif_name(image_path: str) -> str:
-    """Stable per-URI cache filename (matches the executor's sanitizer and
-    the justfile sed rule): non `[A-Za-z0-9._-]` -> '_', strip stray '_',
-    append '.sif'."""
-    return re.sub(r"[^A-Za-z0-9._-]", "_", image_path).strip("_") + ".sif"
+    """Fallback per-URI cache filename, used only when the digest can't be
+    resolved: non `[A-Za-z0-9._-]` -> '_', strip stray '_', append '.sif'."""
+    return _sanitize(image_path) + ".sif"
+
+
+def digest_sif_name(digest: str) -> str:
+    """Digest-addressed cache filename, e.g. `sha256_<hex>.sif`. A tag and the
+    `@sha256:…` it resolves to yield the same name, so switching a DB row between
+    them reuses one cached pull instead of re-pulling."""
+    return _sanitize(digest) + ".sif"
 
 
 def _digest_from_uri(image_path: str) -> Optional[str]:
@@ -132,30 +143,32 @@ def ensure_cached(
 ) -> str:
     """Pull a URI-shaped image into the cache and return its local `.sif` path.
 
-    Fast-path: HEAD the registry manifest and compare its digest against a
-    sidecar we wrote at last pull. On match (and not `force`), skip apptainer
-    pull entirely (saves the SIF-file rewrite from cached blobs, ~0.5-1s per
-    task). On mismatch / no sidecar / HEAD failure / `force`: full pull,
-    streaming output to loguru so progress lands in the manager Log Drawer.
+    The cache is digest-addressed: resolve the manifest digest first (embedded in
+    an `@sha256:…` URI, else a registry HEAD probe) and name the `.sif` after it.
+    So a tag and the digest it resolves to map to one file — switching a DB row
+    between `:main` and its `@sha256:…` (or back) reuses the cached pull. If the
+    digest can't be resolved (HEAD failure / non-registry scheme), fall back to a
+    URI-derived name and always pull, streaming output to loguru so progress lands
+    in the manager Log Drawer.
 
-    `dir` defaults to `cache_dir()`. `force=True` bypasses the digest fast-path
-    and always re-pulls. Raises `subprocess.CalledProcessError` if the pull
-    fails. Precondition: `image_path.startswith(_URI_SCHEMES)`.
+    `dir` defaults to `cache_dir()`. `force=True` always re-pulls. Raises
+    `subprocess.CalledProcessError` if the pull fails. Precondition:
+    `image_path.startswith(_URI_SCHEMES)`.
     """
     directory = dir if dir is not None else cache_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    local_name = local_sif_name(image_path)
-    local_path = directory / local_name
-    digest_file = local_path.with_name(local_path.name + ".digest")
 
     remote_digest = _digest_from_uri(image_path) or _remote_manifest_digest(image_path)
-    if (
-        not force
-        and remote_digest
-        and local_path.exists()
-        and digest_file.exists()
-        and digest_file.read_text().strip() == remote_digest
-    ):
+    local_name = (
+        digest_sif_name(remote_digest) if remote_digest else local_sif_name(image_path)
+    )
+    local_path = directory / local_name
+
+    # Digest-addressed: the file existing means its content is exactly this
+    # digest, so there's nothing to re-verify — skip the pull. A moving tag whose
+    # digest has changed resolves to a different (not-yet-present) name and pulls;
+    # the old digest's .sif lingers until `just purge-wrappers`.
+    if not force and remote_digest and local_path.exists():
         logger.info(
             f"apptainer SIF up-to-date ({remote_digest[:19]}…), skipping pull: {local_path}"
         )
@@ -224,13 +237,6 @@ def ensure_cached(
     elapsed = time.monotonic() - started
     logger.info(f"apptainer pull complete in {elapsed:.1f}s -> {local_path}")
 
-    # Record the digest we just pulled so the next task can short-circuit.
-    # We use the HEAD-probed digest; if that probe failed (remote_digest is
-    # None), skip the sidecar write — next task will pull again, which is
-    # correct (we can't confirm what we have).
-    if remote_digest:
-        digest_file.write_text(remote_digest)
-
     return str(local_path)
 
 
@@ -283,7 +289,13 @@ def main() -> None:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="re-pull even when the cached digest already matches",
+        help="re-pull even when the digest-addressed .sif already exists",
+    )
+    parser.add_argument(
+        "--print-names",
+        action="store_true",
+        help="resolve each URI to its cache .sif filename and print it (one per "
+        "line) instead of pulling; used by `just purge-wrappers` for its keep-set",
     )
     parser.add_argument(
         "--log-level",
@@ -304,6 +316,12 @@ def main() -> None:
     if non_uri:
         logger.error(f"not URI-shaped, cannot prefetch: {', '.join(non_uri)}")
         sys.exit(2)
+
+    if args.print_names:
+        for uri in uris:
+            digest = _digest_from_uri(uri) or _remote_manifest_digest(uri)
+            print(digest_sif_name(digest) if digest else local_sif_name(uri))
+        sys.exit(0)
 
     logger.info(
         f"Prefetching {len(uris)} image(s) into {cache_dir()} (force={args.force})"
