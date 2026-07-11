@@ -115,7 +115,7 @@ class ApptainerServiceConfig:
         # no sidecar / HEAD failure: full pull, streaming output to
         # loguru so progress lands in the manager Log Drawer.
         if image_path.startswith(_URI_SCHEMES):
-            cache_dir = Path(os.environ.get("PISA_SIF_DIR", "/opt/pisa/sif"))
+            cache_dir = Path(str(Path(os.environ.get("PISA_DATA_DIR", "/PISA_DATA_DIR")) / "sif"))
             cache_dir.mkdir(parents=True, exist_ok=True)
             local_name = re.sub(r"[^A-Za-z0-9._-]", "_", image_path).strip("_") + ".sif"
             local_path = cache_dir / local_name
