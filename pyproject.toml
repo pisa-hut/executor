@@ -17,5 +17,10 @@ simcore = { git = "https://github.com/pisa-hut/simulation-core.git" }
 
 [dependency-groups]
 dev = [
+    "pytest>=9.1.1",
     "ruff>=0.15.15",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

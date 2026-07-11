@@ -277,7 +277,9 @@ def main() -> None:
         prog="executor.image_cache",
         description="Pre-pull / refresh wrapper images into $PISA_DATA_DIR/sif.",
     )
-    parser.add_argument("uris", nargs="*", help="image URIs to cache (oras://, docker://, …)")
+    parser.add_argument(
+        "uris", nargs="*", help="image URIs to cache (oras://, docker://, …)"
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -303,7 +305,9 @@ def main() -> None:
         logger.error(f"not URI-shaped, cannot prefetch: {', '.join(non_uri)}")
         sys.exit(2)
 
-    logger.info(f"Prefetching {len(uris)} image(s) into {cache_dir()} (force={args.force})")
+    logger.info(
+        f"Prefetching {len(uris)} image(s) into {cache_dir()} (force={args.force})"
+    )
     succeeded: list[str] = []
     failed: list[tuple[str, str]] = []
     for uri in uris:
@@ -315,7 +319,9 @@ def main() -> None:
             failed.append((uri, f"{type(exc).__name__}: {exc}"))
             logger.error(f"failed {uri}: {exc}")
 
-    logger.info(f"Image cache update complete: {len(succeeded)} ok, {len(failed)} failed")
+    logger.info(
+        f"Image cache update complete: {len(succeeded)} ok, {len(failed)} failed"
+    )
     for uri, err in failed:
         logger.error(f"  FAILED {uri}: {err}")
     sys.exit(1 if failed else 0)

@@ -12,12 +12,13 @@ set dotenv-load
 pisa_data_dir := env_var_or_default("PISA_DATA_DIR", "/PISA_DATA_DIR")
 sif_dir := pisa_data_dir / "sif"
 
-# Wrapper images to keep warm — the av + simulator repos from the manager DB
-# (image_path.apptainer), pinned to the moving :main tag so "update" fetches the
-# newest build without editing the DB. The module digest-checks each and skips a
-# pull when the tag hasn't moved. carla-wrapper carries two live tags: :main (the
-# carla simulator) and :native (the native-carla simulator).
-wrapper_images := "docker://zot.hcislab.org/tonychi/carla-wrapper:main docker://zot.hcislab.org/tonychi/carla-wrapper:native docker://zot.hcislab.org/tonychi/carla-agent-wrapper:main docker://zot.hcislab.org/tonychi/autoware-wrapper:main docker://zot.hcislab.org/tonychi/esmini-wrapper:main docker://docker.io/tonychi/pcla-wrapper:main"
+# Wrapper images to keep warm — the av + simulator repos from the manager DB,
+# pinned to the exact digests in each row's image_path.apptainer. The cache key
+# is the full URI (digest included), so these must match the DB verbatim or a
+# prefetch caches under a different filename than the task claim resolves. Re-pin
+# both here and in the DB when a wrapper is rebuilt. carla-wrapper has two live
+# builds: :main (carla simulator) and :native (native-carla simulator).
+wrapper_images := "docker://zot.hcislab.org/tonychi/carla-wrapper@sha256:7dd87f52281f73d5b001a02da900dbae38870b3511537bcc3bd14cfef15e97f7 docker://zot.hcislab.org/tonychi/carla-wrapper@sha256:1b702bb55ddfebf7b91c2fc273eb7d6d4411cc78cc7a07712ca1319c849e5848 docker://zot.hcislab.org/tonychi/carla-agent-wrapper@sha256:5860340c8b7882bcbbf4f86058c4ea201f132df20582c571098af3d5fd79668c docker://zot.hcislab.org/tonychi/autoware-wrapper@sha256:0414ad0e0adca2b55d07103ada68ab82224ca02ee1526ee8013a741dcae3ba36 docker://zot.hcislab.org/tonychi/esmini-wrapper@sha256:d404d36cd52918e3f8d2095db05bb6908e84081ca79a9f8b0c1215aac8f5a962 docker://docker.io/tonychi/pcla-wrapper@sha256:de15c1bb652a29a08b32ca034f771bbbe5b85f49a27b5c7ffdce473bc66331cf"
 
 # Prefetch / update wrapper images into the cache (digest-checked, writes the
 # sidecar so a later task claim skips the pull). With no args, updates the

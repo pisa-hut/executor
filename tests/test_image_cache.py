@@ -81,9 +81,12 @@ class EnsureCachedTests(unittest.TestCase):
     def test_pull_sets_apptainer_tmpdir_under_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
-            with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(
-                image_cache.subprocess, "Popen", return_value=_fake_popen_success()
-            ) as popen:
+            with (
+                mock.patch.dict(os.environ, {}, clear=False),
+                mock.patch.object(
+                    image_cache.subprocess, "Popen", return_value=_fake_popen_success()
+                ) as popen,
+            ):
                 os.environ.pop("APPTAINER_TMPDIR", None)
                 image_cache.ensure_cached(PINNED_URI, dir=d)
             env = popen.call_args.kwargs["env"]
@@ -94,13 +97,16 @@ class EnsureCachedTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
             override = str(d / "scratch")
-            with mock.patch.dict(
-                os.environ, {"APPTAINER_TMPDIR": override}
-            ), mock.patch.object(
-                image_cache.subprocess, "Popen", return_value=_fake_popen_success()
-            ) as popen:
+            with (
+                mock.patch.dict(os.environ, {"APPTAINER_TMPDIR": override}),
+                mock.patch.object(
+                    image_cache.subprocess, "Popen", return_value=_fake_popen_success()
+                ) as popen,
+            ):
                 image_cache.ensure_cached(PINNED_URI, dir=d)
-            self.assertEqual(popen.call_args.kwargs["env"]["APPTAINER_TMPDIR"], override)
+            self.assertEqual(
+                popen.call_args.kwargs["env"]["APPTAINER_TMPDIR"], override
+            )
 
     def test_force_pulls_even_on_digest_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,10 +132,10 @@ class MainTests(unittest.TestCase):
                 raise RuntimeError("boom")
             return "/cache/" + image_cache.local_sif_name(uri)
 
-        with mock.patch.object(
-            image_cache, "ensure_cached", side_effect=fake_ensure
-        ), mock.patch.object(sys, "argv", ["executor.image_cache", *uris]), mock.patch(
-            "dotenv.load_dotenv"
+        with (
+            mock.patch.object(image_cache, "ensure_cached", side_effect=fake_ensure),
+            mock.patch.object(sys, "argv", ["executor.image_cache", *uris]),
+            mock.patch("dotenv.load_dotenv"),
         ):
             with self.assertRaises(SystemExit) as cm:
                 image_cache.main()
@@ -137,11 +143,11 @@ class MainTests(unittest.TestCase):
         self.assertEqual(attempted, uris)  # all attempted despite the middle failure
 
     def test_rejects_non_uri_args(self) -> None:
-        with mock.patch.object(
-            sys, "argv", ["executor.image_cache", "not-a-uri.sif"]
-        ), mock.patch("dotenv.load_dotenv"), mock.patch.object(
-            image_cache, "ensure_cached"
-        ) as ec:
+        with (
+            mock.patch.object(sys, "argv", ["executor.image_cache", "not-a-uri.sif"]),
+            mock.patch("dotenv.load_dotenv"),
+            mock.patch.object(image_cache, "ensure_cached") as ec,
+        ):
             with self.assertRaises(SystemExit) as cm:
                 image_cache.main()
         self.assertEqual(cm.exception.code, 2)

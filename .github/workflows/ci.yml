@@ -35,3 +35,4 @@ jobs:
             exit 0
           fi
       - run: uv run ruff format --check
+      - run: uv run pytest -q
