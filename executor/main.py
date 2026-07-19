@@ -20,6 +20,7 @@ from simcore.execution import ExecResult, ProgressUpdate, RetryHint
 from executor.apptainer_utils.apptainer_manager import ApptainerServiceManager
 from executor.docker_utils.docker_manager import DockerServiceManager
 from executor.manager_client import ManagerClient
+from executor import timing
 from executor.log_capture import LogCapture, install as install_log_capture
 from executor.log_streamer import LogStreamer
 from executor.service_manager import ServiceManager
@@ -420,7 +421,24 @@ def parse_args(
         default="apptainer",
         help="Container backend to use for services (default: apptainer)",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--skip-exec",
+        action="store_true",
+        default=bool(os.getenv("EXECUTOR_SKIP_EXEC")),
+        help="Claim, stage, and start services, but skip the simulation "
+        "run and report succeeded (env: EXECUTOR_SKIP_EXEC)",
+    )
+    parser.add_argument(
+        "--skip-service",
+        action="store_true",
+        default=bool(os.getenv("EXECUTOR_SKIP_SERVICE")),
+        help="With --skip-exec: also skip starting the service containers "
+        "(env: EXECUTOR_SKIP_SERVICE)",
+    )
+    args = parser.parse_args()
+    if args.skip_service and not args.skip_exec:
+        parser.error("--skip-service requires --skip-exec")
+    return args
 
 
 def main():
@@ -456,6 +474,8 @@ def main():
 
     job_id = int(executor_info.get("job_id", "unknown"))
 
+    marks: dict[str, float] = {}
+    marks["claim_start"] = time.time()
     claimed_spec = client.claim_task_spec(
         executor_info,
         task_id=args.task_id,
@@ -467,6 +487,7 @@ def main():
         scenario_id=args.scenario_id,
         sampler_name=args.sampler,
     )
+    marks["claim_end"] = time.time()
 
     if claimed_spec is None:
         logger.info("No task claimed. Executor will exit.")
@@ -546,6 +567,7 @@ def main():
     # responses always include it. KeyError here means the manager
     # is older than this executor — surface as a configuration error.
     claimed_monitor = claimed_spec["monitor"]
+    marks["stage_start"] = time.time()
     staged = stage_task_inputs(
         manager_url=client.manager_url,
         stage_root=staged_root,
@@ -556,6 +578,7 @@ def main():
         sampler_id=int(claimed_spec.get("sampler", {}).get("id", 0)),
         monitor_id=int(claimed_monitor["id"]),
     )
+    marks["stage_end"] = time.time()
     logger.debug(f"Staged inputs under {staged_root}")
 
     services_spec = build_services_spec(
@@ -569,55 +592,67 @@ def main():
     service_manager = _create_service_manager(args.backend, job_id)
     shutdown_state["service_manager"] = service_manager
     try:
-        started_specs = service_manager.start(
-            services_spec=services_spec,
-            output_dir=output_dir,
-        )
+        if args.skip_service:
+            logger.info("--skip-service: not starting service containers")
+            started_specs = {}
+        else:
+            marks["container_start"] = time.time()
+            started_specs = service_manager.start(
+                services_spec=services_spec,
+                output_dir=output_dir,
+            )
+            marks["container_up"] = time.time()
 
-        runner_spec = build_runner_spec(
-            claimed_spec=claimed_spec,
-            claimed_simulator=claimed_simulator,
-            claimed_av=claimed_av,
-            claimed_map=claimed_map,
-            claimed_scenario=claimed_scenario,
-            started_specs=started_specs,
-            staged=staged,
-            job_id=job_id,
-            output_dir=output_dir,
-        )
-        with open(os.path.join(output_dir, "runner_spec.json"), "w") as f:
-            json.dump(runner_spec, f, indent=4)
-        logger.debug(
-            f"Runner spec available at: {os.path.join(output_dir, 'runner_spec.json')}"
-        )
+        if args.skip_exec:
+            logger.info("--skip-exec: skipping simulation run")
+            terminal_verb, terminal_reason, exec_result = "succeeded", "", None
+        else:
+            runner_spec = build_runner_spec(
+                claimed_spec=claimed_spec,
+                claimed_simulator=claimed_simulator,
+                claimed_av=claimed_av,
+                claimed_map=claimed_map,
+                claimed_scenario=claimed_scenario,
+                started_specs=started_specs,
+                staged=staged,
+                job_id=job_id,
+                output_dir=output_dir,
+            )
+            with open(os.path.join(output_dir, "runner_spec.json"), "w") as f:
+                json.dump(runner_spec, f, indent=4)
+            logger.debug(
+                f"Runner spec available at: {os.path.join(output_dir, 'runner_spec.json')}"
+            )
 
-        progress_callback: Callable[[ProgressUpdate], None] | None = None
-        if task_run_id is not None:
-            trid = int(task_run_id)
+            progress_callback: Callable[[ProgressUpdate], None] | None = None
+            if task_run_id is not None:
+                trid = int(task_run_id)
 
-            def progress_callback(update: ProgressUpdate) -> None:
-                client.report_progress(
-                    trid,
-                    update.finished,
-                    update.aborted,
-                    update.skipped,
-                    update.total,
-                )
-                # Persist the just-finalised concrete immediately so its
-                # created_at reflects the real finish time (drives live
-                # throughput). Best-effort: the terminal reconcile re-sends
-                # any that fail, and the manager insert is idempotent.
-                if update.outcome is not None:
-                    try:
-                        client.create_concrete_runs(trid, [update.outcome])
-                    except Exception as exc:
-                        logger.debug(f"incremental concrete_run insert failed: {exc}")
+                def progress_callback(update: ProgressUpdate) -> None:
+                    client.report_progress(
+                        trid,
+                        update.finished,
+                        update.aborted,
+                        update.skipped,
+                        update.total,
+                    )
+                    # Persist the just-finalised concrete immediately so its
+                    # created_at reflects the real finish time (drives live
+                    # throughput). Best-effort: the terminal reconcile re-sends
+                    # any that fail, and the manager insert is idempotent.
+                    if update.outcome is not None:
+                        try:
+                            client.create_concrete_runs(trid, [update.outcome])
+                        except Exception as exc:
+                            logger.debug(
+                                f"incremental concrete_run insert failed: {exc}"
+                            )
 
-        terminal_verb, terminal_reason, exec_result = _execute_runner_task(
-            runner_spec=runner_spec,
-            shutdown_state=shutdown_state,
-            progress_callback=progress_callback,
-        )
+            terminal_verb, terminal_reason, exec_result = _execute_runner_task(
+                runner_spec=runner_spec,
+                shutdown_state=shutdown_state,
+                progress_callback=progress_callback,
+            )
     except Exception as exc:
         logger.error(f"Executor failed with error: {exc}")
         terminal_verb = "failed"
@@ -673,6 +708,7 @@ def main():
                     )
                 except Exception as exc:
                     logger.error(f"Concrete outcome POST failed: {exc}")
+            marks["report_start"] = time.time()
             try:
                 _send_terminal(
                     client=client,
@@ -687,6 +723,19 @@ def main():
                 )
             except Exception as exc:
                 logger.error(f"Terminal lifecycle POST failed: {exc}")
+            marks["report_end"] = time.time()
+
+    try:
+        timing.write_line(
+            task_id=task_id,
+            task_run_id=None if task_run_id is None else int(task_run_id),
+            mode="infra"
+            if args.skip_service
+            else ("container" if args.skip_exec else "full"),
+            marks=marks,
+        )
+    except Exception as exc:
+        logger.warning(f"Timing CSV write failed: {exc}")
 
     logger.debug("Executor finished execution.")
 
