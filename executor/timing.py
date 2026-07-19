@@ -29,7 +29,8 @@ def csv_line(
     marks: dict[str, float],
 ) -> str:
     values = [str(task_id), "" if task_run_id is None else str(task_run_id)]
-    values += [mode, label, hostname]
+    # ponytail: sanitize instead of CSV-quoting; fields are machine-generated
+    values += [v.replace(",", "_").replace("\n", "_") for v in (mode, label, hostname)]
     values += [f"{marks[f]:.6f}" if f in marks else "" for f in MARK_FIELDS]
     return ",".join(values)
 
