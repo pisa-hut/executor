@@ -13,24 +13,31 @@ set dotenv-load
 pisa_data_dir := env_var_or_default("PISA_DATA_DIR", "/PISA_DATA_DIR")
 sif_dir := pisa_data_dir / "sif"
 
-# Wrapper images to keep warm — must match each DB row's image_path.apptainer
-# verbatim so a prefetch caches under the same filename a task claim resolves.
-# All use the moving :main / :native tag on the zot pull-through; the executor's
-# digest-checked .sif sidecar re-pulls only when a tag moves, so "latest" stays
-# current without editing the DB. Served via zot (not docker.io direct) so the
-# executor's unauthenticated HEAD probe can resolve the tag's digest — docker.io
-# 401s it. carla-wrapper has two live builds: :main (carla) and :native (native-carla).
-wrapper_images := "docker://zot.hcislab.org/tonychi/carla-wrapper:main docker://zot.hcislab.org/tonychi/carla-wrapper:native docker://zot.hcislab.org/tonychi/carla-agent-wrapper:main docker://zot.hcislab.org/tonychi/autoware-wrapper:main docker://zot.hcislab.org/tonychi/esmini-wrapper:main docker://zot.hcislab.org/tonychi/pcla-wrapper:main"
+# Registry the executor pulls wrappers from. Single edit site if the host moves.
+zot := "zot.hcislab.org"
+
+# Wrapper images to keep warm, read live from the DB (simulator + av rows'
+# image_path.apptainer). This is the exact URI a task claim resolves, so a
+# prefetch/purge keyed off it cannot drift from what claims actually pull —
+# whether a row carries a moving :main/:native tag or a pinned @sha256 digest.
+_wrapper-images:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pg="${MANAGER_URL%/manager}/postgrest"
+    for tbl in simulator av; do
+        curl -sfL "$pg/$tbl?select=image_path" \
+            | python3 -c 'import sys, json; [print(u) for r in json.load(sys.stdin) if (u := (r.get("image_path") or {}).get("apptainer"))]'
+    done
 
 # Prefetch / update wrapper images into the cache (digest-checked, writes the
-# sidecar so a later task claim skips the pull). With no args, updates the
-# `wrapper_images` list; pass explicit URIs to update just those.
+# sidecar so a later task claim skips the pull). With no args, updates every
+# wrapper the DB references (`_wrapper-images`); pass explicit URIs to scope it.
 update-cache *args:
     #!/usr/bin/env bash
     set -euo pipefail
     uris="{{args}}"
     if [[ -z "$uris" ]]; then
-        uris="{{wrapper_images}}"
+        uris="$(just _wrapper-images)"
     fi
     uv run -m executor.image_cache $uris
 
@@ -40,7 +47,7 @@ update-cache-force *args:
     set -euo pipefail
     uris="{{args}}"
     if [[ -z "$uris" ]]; then
-        uris="{{wrapper_images}}"
+        uris="$(just _wrapper-images)"
     fi
     uv run -m executor.image_cache --force $uris
 
@@ -61,7 +68,7 @@ purge-wrappers:
     declare -A keep=()
     while IFS= read -r name; do
         [[ -n "$name" ]] && keep["$name"]=1
-    done < <(uv run -m executor.image_cache --print-names {{wrapper_images}})
+    done < <(uv run -m executor.image_cache --print-names $(just _wrapper-images))
     if [[ "${#keep[@]}" -eq 0 ]]; then
         echo "Could not resolve any current image names; aborting to avoid deleting the cache." >&2
         exit 1
@@ -80,9 +87,40 @@ purge-wrappers:
     done
     echo "Purge complete: kept $kept current image(s), removed $removed stale image(s) in $dir"
 
-# Deprecated: superseded by `update-cache`. Forwards for now.
-pull-wrappers *uris:
+
+# Resolve each wrapper's :main / :native tag to its current Docker Hub digest and
+# pin the matching DB simulator/av row's image_path to that @sha256 ref, so the
+# executor pulls an immutable image instead of a moving tag. The digest is Hub's
+# authoritative one; the executor pulls via zot, which serves that same digest for
+# every OCI image (all wrappers built with buildx). CAVEAT: pcla-wrapper is built
+# without buildx (Docker schema2), so zot re-wraps it to OCI under a different
+# digest and cannot serve the Hub digest — its pin only resolves once pcla ships
+# the buildx workflow and republishes as OCI. PostgREST base is derived from
+# MANAGER_URL (.env). This name→repo→tag map is the one thing not DB-derived: once
+# a row is pinned to a digest the tag is gone, so it lives here. `name` is the key.
+# Run after a freshly-pushed tag to advance the pin. DRY=1 only prints the lookup.
+pin-digests:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "pull-wrappers is deprecated; use 'just update-cache {{uris}}'" >&2
-    just update-cache {{uris}}
+    pg="${MANAGER_URL%/manager}/postgrest"
+    # table:name:repo:tag
+    rows=(
+        "simulator:esmini:esmini-wrapper:main"
+        "simulator:carla:carla-wrapper:main"
+        "simulator:native-carla:carla-wrapper:native"
+        "av:autoware:autoware-wrapper:main"
+        "av:plant:pcla-wrapper:main"
+        "av:carla-agent:carla-agent-wrapper:main"
+    )
+    for row in "${rows[@]}"; do
+        IFS=: read -r table name repo tag <<<"$row"
+        digest=$(skopeo inspect "docker://docker.io/tonychi/$repo:$tag" \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["Digest"])')
+        ref="{{zot}}/tonychi/$repo@$digest"
+        printf '%-14s %-22s %s\n' "$name" "$repo:$tag" "$digest"
+        if [[ "${DRY:-}" == "1" ]]; then continue; fi
+        curl -sfL -X PATCH "$pg/$table?name=eq.$name" \
+            -H 'Content-Type: application/json' \
+            -d "{\"image_path\":{\"docker\":\"$ref\",\"apptainer\":\"docker://$ref\"}}" >/dev/null
+    done
+    if [[ "${DRY:-}" == "1" ]]; then echo "(dry run — no rows written)"; else echo "Pinned ${#rows[@]} rows via $pg"; fi
