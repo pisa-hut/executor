@@ -1,12 +1,15 @@
+import os
+import random
+import re
+import shutil
+import socket
+import subprocess
+import tempfile
+import threading
+import time
 from abc import ABC, abstractmethod
 from collections import deque
 from pathlib import Path
-import random
-import re
-import socket
-import subprocess
-import threading
-import time
 from typing import Any, Optional
 
 from loguru import logger
@@ -76,6 +79,13 @@ def find_free_port(start_port: int = 8000, max_attempts: int = 100) -> Optional[
     return None
 
 
+def _uv_cache_host_dir() -> Path:
+    base = Path(os.environ.get("TMPDIR") or "/tmp")
+    path = base / "pisa-uv-cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 class ServiceManager(ABC):
     """Shared lifecycle orchestration for containerized AV/simulator services."""
 
@@ -86,6 +96,22 @@ class ServiceManager(ABC):
     SCENARIO_CONTAINER_PATH = "/mnt/scenario"
     OUTPUT_CONTAINER_PATH = "/mnt/output"
 
+    # Wrapper images bake a root-owned `/app/.venv` at build time, and the
+    # container runs as a non-root user (apptainer: host uid; docker:
+    # `--user uid:gid`). The wrapper's entrypoint runs `uv run`, which
+    # reinstalls the editable package into that venv and fails on the
+    # root-owned files. We overlay the venv path with a user-owned temp
+    # dir so the rebuild succeeds, leaving the image's own copy untouched.
+    # Overridable for images that don't use `/app/.venv`.
+    VENV_CONTAINER_PATH = os.environ.get("APPTAINER_VENV_CONTAINER_PATH", "/app/.venv")
+
+    # uv writes its wheel cache to $HOME/.cache/uv. Under apptainer's
+    # `--writable-tmpfs` that lands on a RAM-backed tmpfs (often only
+    # 64 MiB), so a large wrapper like autoware runs out of space during
+    # the venv reinstall. Bind a persistent host dir (survives across
+    # runs, so re-claims skip re-downloading) and point UV_CACHE_DIR at it.
+    UV_CACHE_CONTAINER_PATH = "/uv-cache"
+
     def __init__(self, id: str):
         self.id = id
         self.running_instances: dict[str, dict[str, Any]] = {}
@@ -94,6 +120,17 @@ class ServiceManager(ABC):
         # docker `logs --tail` at snapshot time) so the manager only
         # learns about wrapper noise when the task ends, never live.
         self.wrapper_logs = WrapperLogBuffer()
+        # User-writable overlays for the wrapper's root-owned /app/.venv
+        # (fresh per service manager) and uv's wheel cache (persistent so
+        # later claims reuse downloads). See the container-path constants.
+        self.venv_overlay = Path(
+            tempfile.mkdtemp(
+                prefix=f"pisa-venv-overlay-{os.getpid()}-",
+                dir=os.environ.get("TMPDIR") or None,
+            )
+        )
+        logger.debug(f"Overlaying {self.VENV_CONTAINER_PATH} with {self.venv_overlay}")
+        self.uv_cache_host = _uv_cache_host_dir()
 
     def snapshot_wrapper_outputs(self) -> str:
         """Tail of each running wrapper's stdout, joined into one block.
@@ -258,18 +295,36 @@ class ServiceManager(ABC):
             (osm_host, self.MAP_CONTAINER_PATHS["osm_path"]),
             (scenario_host, self.SCENARIO_CONTAINER_PATH),
             (output_host, self.OUTPUT_CONTAINER_PATH),
+            # User-writable overlays so the wrapper's non-root `uv run`
+            # can rebuild its root-owned venv and cache wheels on host
+            # disk instead of a 64 MiB RAM tmpfs. Shared by both
+            # services (same venv/uv layout in every wrapper image).
+            (self.venv_overlay, self.VENV_CONTAINER_PATH),
+            (self.uv_cache_host, self.UV_CACHE_CONTAINER_PATH),
         ]
+
+        shared_envs: dict[str, str] = {
+            "UV_CACHE_DIR": self.UV_CACHE_CONTAINER_PATH,
+        }
 
         av_service_config = dict(av_spec)
         av_service_config["bind_mounts"] = list(av_spec.get("bind_mounts", [])) + list(
             shared_bind_mounts
         )
+        av_service_config["extra_envs"] = {
+            **av_spec.get("extra_envs", {}),
+            **shared_envs,
+        }
         av_service_info = self._start_shared_service("av", av_service_config)
 
         simulator_service_config = dict(simulator_spec)
         simulator_service_config["bind_mounts"] = list(
             simulator_spec.get("bind_mounts", [])
         ) + list(shared_bind_mounts)
+        simulator_service_config["extra_envs"] = {
+            **simulator_spec.get("extra_envs", {}),
+            **shared_envs,
+        }
         simulator_service_info = self._start_shared_service(
             "simulator",
             simulator_service_config,
@@ -304,3 +359,9 @@ class ServiceManager(ABC):
         for service_name in list(self.running_instances.keys()):
             self._stop_backend_service(service_name)
             self.running_instances.pop(service_name, None)
+        # The venv overlay is a throwaway per-run scratch dir; reclaim it
+        # now that no container references it. The uv cache is persistent
+        # (survives to be reused by the next run) and is left in place.
+        overlay = self.venv_overlay
+        if overlay is not None and overlay.exists():
+            shutil.rmtree(overlay, ignore_errors=True)
